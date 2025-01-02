@@ -2,6 +2,9 @@ module Polars
   # Expressions that can be used in various contexts.
   class Expr
     # @private
+    NO_DEFAULT = Object.new
+
+    # @private
     attr_accessor :_rbexpr
 
     # @private
@@ -23,112 +26,106 @@ module Polars
     #
     # @return [Expr]
     def ^(other)
-      wrap_expr(_rbexpr._xor(_to_rbexpr(other)))
+      _from_rbexpr(_rbexpr._xor(_to_rbexpr(other)))
     end
 
     # Bitwise AND.
     #
     # @return [Expr]
     def &(other)
-      wrap_expr(_rbexpr._and(_to_rbexpr(other)))
+      _from_rbexpr(_rbexpr._and(_to_rbexpr(other)))
     end
 
     # Bitwise OR.
     #
     # @return [Expr]
     def |(other)
-      wrap_expr(_rbexpr._or(_to_rbexpr(other)))
+      _from_rbexpr(_rbexpr._or(_to_rbexpr(other)))
     end
 
     # Performs addition.
     #
     # @return [Expr]
     def +(other)
-      wrap_expr(_rbexpr + _to_rbexpr(other))
+      _from_rbexpr(_rbexpr + _to_rbexpr(other))
     end
 
     # Performs subtraction.
     #
     # @return [Expr]
     def -(other)
-      wrap_expr(_rbexpr - _to_rbexpr(other))
+      _from_rbexpr(_rbexpr - _to_rbexpr(other))
     end
 
     # Performs multiplication.
     #
     # @return [Expr]
     def *(other)
-      wrap_expr(_rbexpr * _to_rbexpr(other))
+      _from_rbexpr(_rbexpr * _to_rbexpr(other))
     end
 
     # Performs division.
     #
     # @return [Expr]
     def /(other)
-      wrap_expr(_rbexpr / _to_rbexpr(other))
-    end
-
-    # Performs floor division.
-    #
-    # @return [Expr]
-    def floordiv(other)
-      wrap_expr(_rbexpr.floordiv(_to_rbexpr(other)))
+      _from_rbexpr(_rbexpr / _to_rbexpr(other))
     end
 
     # Returns the modulo.
     #
     # @return [Expr]
     def %(other)
-      wrap_expr(_rbexpr % _to_rbexpr(other))
+      _from_rbexpr(_rbexpr % _to_rbexpr(other))
     end
 
     # Raises to the power of exponent.
     #
     # @return [Expr]
     def **(power)
-      pow(power)
+      exponent = Utils.parse_into_expression(power)
+      _from_rbexpr(_rbexpr.pow(exponent))
     end
 
     # Greater than or equal.
     #
     # @return [Expr]
     def >=(other)
-      wrap_expr(_rbexpr.gt_eq(_to_expr(other)._rbexpr))
+      _from_rbexpr(_rbexpr.gt_eq(_to_expr(other)._rbexpr))
     end
 
     # Less than or equal.
     #
     # @return [Expr]
     def <=(other)
-      wrap_expr(_rbexpr.lt_eq(_to_expr(other)._rbexpr))
+      _from_rbexpr(_rbexpr.lt_eq(_to_expr(other)._rbexpr))
     end
 
     # Equal.
     #
     # @return [Expr]
     def ==(other)
-      wrap_expr(_rbexpr.eq(_to_expr(other)._rbexpr))
+      _from_rbexpr(_rbexpr.eq(_to_expr(other)._rbexpr))
     end
 
     # Not equal.
     #
     # @return [Expr]
     def !=(other)
-      wrap_expr(_rbexpr.neq(_to_expr(other)._rbexpr))
+      _from_rbexpr(_rbexpr.neq(_to_expr(other)._rbexpr))
     end
 
     # Less than.
     #
     # @return [Expr]
     def <(other)
-      wrap_expr(_rbexpr.lt(_to_expr(other)._rbexpr))
+      _from_rbexpr(_rbexpr.lt(_to_expr(other)._rbexpr))
     end
 
     # Greater than.
     #
     # @return [Expr]
     def >(other)
-      wrap_expr(_rbexpr.gt(_to_expr(other)._rbexpr))
+      _from_rbexpr(_rbexpr.gt(_to_expr(other)._rbexpr))
     end
 
     # Performs boolean not.
@@ -142,7 +139,7 @@ module Polars
     #
     # @return [Expr]
     def -@
-      Utils.lit(0) - self
+      _from_rbexpr(_rbexpr.neg)
     end
 
     # Cast to physical representation of the logical dtype.
@@ -179,7 +176,7 @@ module Polars
     #   # │ a    ┆ 0             │
     #   # └──────┴───────────────┘
     def to_physical
-      wrap_expr(_rbexpr.to_physical)
+      _from_rbexpr(_rbexpr.to_physical)
     end
 
     # Check if any boolean value in a Boolean column is `true`.
@@ -199,7 +196,7 @@ module Polars
     #   # │ true ┆ false │
     #   # └──────┴───────┘
     def any(drop_nulls: true)
-      wrap_expr(_rbexpr.any(drop_nulls))
+      _from_rbexpr(_rbexpr.any(drop_nulls))
     end
 
     # Check if all boolean values in a Boolean column are `true`.
@@ -224,7 +221,7 @@ module Polars
     #   # │ true ┆ false ┆ false │
     #   # └──────┴───────┴───────┘
     def all(drop_nulls: true)
-      wrap_expr(_rbexpr.all(drop_nulls))
+      _from_rbexpr(_rbexpr.all(drop_nulls))
     end
 
     # Compute the square root of the elements.
@@ -290,7 +287,7 @@ module Polars
     #   # │ 54.59815 │
     #   # └──────────┘
     def exp
-      wrap_expr(_rbexpr.exp)
+      _from_rbexpr(_rbexpr.exp)
     end
 
     # Rename the output of an expression.
@@ -325,7 +322,7 @@ module Polars
     #   # │ 3   ┆ null │
     #   # └─────┴──────┘
     def alias(name)
-      wrap_expr(_rbexpr._alias(name))
+      _from_rbexpr(_rbexpr._alias(name))
     end
 
     # TODO support symbols for exclude
@@ -366,22 +363,22 @@ module Polars
     #   # │ 3   ┆ 1.5  │
     #   # └─────┴──────┘
     def exclude(columns)
-      if columns.is_a?(String)
+      if columns.is_a?(::String)
         columns = [columns]
-        return wrap_expr(_rbexpr.exclude(columns))
+        return _from_rbexpr(_rbexpr.exclude(columns))
       elsif !columns.is_a?(::Array)
         columns = [columns]
-        return wrap_expr(_rbexpr.exclude_dtype(columns))
+        return _from_rbexpr(_rbexpr.exclude_dtype(columns))
       end
 
-      if !columns.all? { |a| a.is_a?(String) } || !columns.all? { |a| Utils.is_polars_dtype(a) }
+      if !columns.all? { |a| a.is_a?(::String) } || !columns.all? { |a| Utils.is_polars_dtype(a) }
         raise ArgumentError, "input should be all string or all DataType"
       end
 
-      if columns[0].is_a?(String)
-        wrap_expr(_rbexpr.exclude(columns))
+      if columns[0].is_a?(::String)
+        _from_rbexpr(_rbexpr.exclude(columns))
       else
-        wrap_expr(_rbexpr.exclude_dtype(columns))
+        _from_rbexpr(_rbexpr.exclude_dtype(columns))
       end
     end
 
@@ -414,6 +411,26 @@ module Polars
     # Add a prefix to the root column name of the expression.
     #
     # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "a" => [1, 2, 3],
+    #       "b" => ["x", "y", "z"]
+    #     }
+    #   )
+    #   df.with_columns(Polars.all.reverse.name.prefix("reverse_"))
+    #   # =>
+    #   # shape: (3, 4)
+    #   # ┌─────┬─────┬───────────┬───────────┐
+    #   # │ a   ┆ b   ┆ reverse_a ┆ reverse_b │
+    #   # │ --- ┆ --- ┆ ---       ┆ ---       │
+    #   # │ i64 ┆ str ┆ i64       ┆ str       │
+    #   # ╞═════╪═════╪═══════════╪═══════════╡
+    #   # │ 1   ┆ x   ┆ 3         ┆ z         │
+    #   # │ 2   ┆ y   ┆ 2         ┆ y         │
+    #   # │ 3   ┆ z   ┆ 1         ┆ x         │
+    #   # └─────┴─────┴───────────┴───────────┘
     def prefix(prefix)
       name.prefix(prefix)
     end
@@ -421,6 +438,26 @@ module Polars
     # Add a suffix to the root column name of the expression.
     #
     # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "a" => [1, 2, 3],
+    #       "b" => ["x", "y", "z"]
+    #     }
+    #   )
+    #   df.with_columns(Polars.all.reverse.name.suffix("_reverse"))
+    #   # =>
+    #   # shape: (3, 4)
+    #   # ┌─────┬─────┬───────────┬───────────┐
+    #   # │ a   ┆ b   ┆ a_reverse ┆ b_reverse │
+    #   # │ --- ┆ --- ┆ ---       ┆ ---       │
+    #   # │ i64 ┆ str ┆ i64       ┆ str       │
+    #   # ╞═════╪═════╪═══════════╪═══════════╡
+    #   # │ 1   ┆ x   ┆ 3         ┆ z         │
+    #   # │ 2   ┆ y   ┆ 2         ┆ y         │
+    #   # │ 3   ┆ z   ┆ 1         ┆ x         │
+    #   # └─────┴─────┴───────────┴───────────┘
     def suffix(suffix)
       name.suffix(suffix)
     end
@@ -490,8 +527,9 @@ module Polars
     #   # │ true  │
     #   # └───────┘
     def is_not
-      wrap_expr(_rbexpr.is_not)
+      _from_rbexpr(_rbexpr.not_)
     end
+    alias_method :not_, :is_not
 
     # Returns a boolean Series indicating which values are null.
     #
@@ -519,7 +557,7 @@ module Polars
     #   # │ 5    ┆ 5.0 ┆ false    ┆ false    │
     #   # └──────┴─────┴──────────┴──────────┘
     def is_null
-      wrap_expr(_rbexpr.is_null)
+      _from_rbexpr(_rbexpr.is_null)
     end
 
     # Returns a boolean Series indicating which values are not null.
@@ -548,7 +586,7 @@ module Polars
     #   # │ 5    ┆ 5.0 ┆ true       ┆ true       │
     #   # └──────┴─────┴────────────┴────────────┘
     def is_not_null
-      wrap_expr(_rbexpr.is_not_null)
+      _from_rbexpr(_rbexpr.is_not_null)
     end
 
     # Returns a boolean Series indicating which values are finite.
@@ -574,7 +612,7 @@ module Polars
     #   # │ true ┆ false │
     #   # └──────┴───────┘
     def is_finite
-      wrap_expr(_rbexpr.is_finite)
+      _from_rbexpr(_rbexpr.is_finite)
     end
 
     # Returns a boolean Series indicating which values are infinite.
@@ -600,7 +638,7 @@ module Polars
     #   # │ false ┆ true  │
     #   # └───────┴───────┘
     def is_infinite
-      wrap_expr(_rbexpr.is_infinite)
+      _from_rbexpr(_rbexpr.is_infinite)
     end
 
     # Returns a boolean Series indicating which values are NaN.
@@ -633,7 +671,7 @@ module Polars
     #   # │ 5    ┆ 5.0 ┆ false   │
     #   # └──────┴─────┴─────────┘
     def is_nan
-      wrap_expr(_rbexpr.is_nan)
+      _from_rbexpr(_rbexpr.is_nan)
     end
 
     # Returns a boolean Series indicating which values are not NaN.
@@ -666,7 +704,7 @@ module Polars
     #   # │ 5    ┆ 5.0 ┆ true         │
     #   # └──────┴─────┴──────────────┘
     def is_not_nan
-      wrap_expr(_rbexpr.is_not_nan)
+      _from_rbexpr(_rbexpr.is_not_nan)
     end
 
     # Get the group indexes of the group by operation.
@@ -701,7 +739,7 @@ module Polars
     #   # │ two   ┆ [3, 4, 5] │
     #   # └───────┴───────────┘
     def agg_groups
-      wrap_expr(_rbexpr.agg_groups)
+      _from_rbexpr(_rbexpr.agg_groups)
     end
 
     # Count the number of values in this expression.
@@ -718,15 +756,13 @@ module Polars
     #   # │ --- ┆ --- │
     #   # │ u32 ┆ u32 │
     #   # ╞═════╪═════╡
-    #   # │ 3   ┆ 3   │
+    #   # │ 3   ┆ 2   │
     #   # └─────┴─────┘
     def count
-      wrap_expr(_rbexpr.count)
+      _from_rbexpr(_rbexpr.count)
     end
 
     # Count the number of values in this expression.
-    #
-    # Alias for {#count}.
     #
     # @return [Expr]
     #
@@ -743,8 +779,9 @@ module Polars
     #   # │ 3   ┆ 3   │
     #   # └─────┴─────┘
     def len
-      count
+      _from_rbexpr(_rbexpr.len)
     end
+    alias_method :length, :len
 
     # Get a slice of this expression.
     #
@@ -781,7 +818,7 @@ module Polars
       if !length.is_a?(Expr)
         length = Polars.lit(length)
       end
-      wrap_expr(_rbexpr.slice(offset._rbexpr, length._rbexpr))
+      _from_rbexpr(_rbexpr.slice(offset._rbexpr, length._rbexpr))
     end
 
     # Append expressions.
@@ -814,8 +851,8 @@ module Polars
     #   # │ 10  ┆ 4    │
     #   # └─────┴──────┘
     def append(other, upcast: true)
-      other = Utils.expr_to_lit_or_expr(other)
-      wrap_expr(_rbexpr.append(other._rbexpr, upcast))
+      other = Utils.parse_into_expression(other)
+      _from_rbexpr(_rbexpr.append(other, upcast))
     end
 
     # Create a single chunk of memory for this Series.
@@ -840,7 +877,7 @@ module Polars
     #   # │ 2      │
     #   # └────────┘
     def rechunk
-      wrap_expr(_rbexpr.rechunk)
+      _from_rbexpr(_rbexpr.rechunk)
     end
 
     # Drop null values.
@@ -867,7 +904,7 @@ module Polars
     #   # │ NaN │
     #   # └─────┘
     def drop_nulls
-      wrap_expr(_rbexpr.drop_nulls)
+      _from_rbexpr(_rbexpr.drop_nulls)
     end
 
     # Drop floating point NaN values.
@@ -894,7 +931,7 @@ module Polars
     #   # │ 4.0  │
     #   # └──────┘
     def drop_nans
-      wrap_expr(_rbexpr.drop_nans)
+      _from_rbexpr(_rbexpr.drop_nans)
     end
 
     # Get an array with the cumulative sum computed at every element.
@@ -912,8 +949,8 @@ module Polars
     #   df = Polars::DataFrame.new({"a" => [1, 2, 3, 4]})
     #   df.select(
     #     [
-    #       Polars.col("a").cumsum,
-    #       Polars.col("a").cumsum(reverse: true).alias("a_reverse")
+    #       Polars.col("a").cum_sum,
+    #       Polars.col("a").cum_sum(reverse: true).alias("a_reverse")
     #     ]
     #   )
     #   # =>
@@ -928,9 +965,10 @@ module Polars
     #   # │ 6   ┆ 7         │
     #   # │ 10  ┆ 4         │
     #   # └─────┴───────────┘
-    def cumsum(reverse: false)
-      wrap_expr(_rbexpr.cumsum(reverse))
+    def cum_sum(reverse: false)
+      _from_rbexpr(_rbexpr.cum_sum(reverse))
     end
+    alias_method :cumsum, :cum_sum
 
     # Get an array with the cumulative product computed at every element.
     #
@@ -947,8 +985,8 @@ module Polars
     #   df = Polars::DataFrame.new({"a" => [1, 2, 3, 4]})
     #   df.select(
     #     [
-    #       Polars.col("a").cumprod,
-    #       Polars.col("a").cumprod(reverse: true).alias("a_reverse")
+    #       Polars.col("a").cum_prod,
+    #       Polars.col("a").cum_prod(reverse: true).alias("a_reverse")
     #     ]
     #   )
     #   # =>
@@ -963,9 +1001,10 @@ module Polars
     #   # │ 6   ┆ 12        │
     #   # │ 24  ┆ 4         │
     #   # └─────┴───────────┘
-    def cumprod(reverse: false)
-      wrap_expr(_rbexpr.cumprod(reverse))
+    def cum_prod(reverse: false)
+      _from_rbexpr(_rbexpr.cum_prod(reverse))
     end
+    alias_method :cumprod, :cum_prod
 
     # Get an array with the cumulative min computed at every element.
     #
@@ -978,8 +1017,8 @@ module Polars
     #   df = Polars::DataFrame.new({"a" => [1, 2, 3, 4]})
     #   df.select(
     #     [
-    #       Polars.col("a").cummin,
-    #       Polars.col("a").cummin(reverse: true).alias("a_reverse")
+    #       Polars.col("a").cum_min,
+    #       Polars.col("a").cum_min(reverse: true).alias("a_reverse")
     #     ]
     #   )
     #   # =>
@@ -994,9 +1033,10 @@ module Polars
     #   # │ 1   ┆ 3         │
     #   # │ 1   ┆ 4         │
     #   # └─────┴───────────┘
-    def cummin(reverse: false)
-      wrap_expr(_rbexpr.cummin(reverse))
+    def cum_min(reverse: false)
+      _from_rbexpr(_rbexpr.cum_min(reverse))
     end
+    alias_method :cummin, :cum_min
 
     # Get an array with the cumulative max computed at every element.
     #
@@ -1009,8 +1049,8 @@ module Polars
     #   df = Polars::DataFrame.new({"a" => [1, 2, 3, 4]})
     #   df.select(
     #     [
-    #       Polars.col("a").cummax,
-    #       Polars.col("a").cummax(reverse: true).alias("a_reverse")
+    #       Polars.col("a").cum_max,
+    #       Polars.col("a").cum_max(reverse: true).alias("a_reverse")
     #     ]
     #   )
     #   # =>
@@ -1025,9 +1065,10 @@ module Polars
     #   # │ 3   ┆ 4         │
     #   # │ 4   ┆ 4         │
     #   # └─────┴───────────┘
-    def cummax(reverse: false)
-      wrap_expr(_rbexpr.cummax(reverse))
+    def cum_max(reverse: false)
+      _from_rbexpr(_rbexpr.cum_max(reverse))
     end
+    alias_method :cummax, :cum_max
 
     # Get an array with the cumulative count computed at every element.
     #
@@ -1039,28 +1080,29 @@ module Polars
     # @return [Expr]
     #
     # @example
-    #   df = Polars::DataFrame.new({"a" => [1, 2, 3, 4]})
-    #   df.select(
+    #   df = Polars::DataFrame.new({"a" => ["x", "k", nil, "d"]})
+    #   df.with_columns(
     #     [
-    #       Polars.col("a").cumcount,
-    #       Polars.col("a").cumcount(reverse: true).alias("a_reverse")
+    #       Polars.col("a").cum_count.alias("cum_count"),
+    #       Polars.col("a").cum_count(reverse: true).alias("cum_count_reverse")
     #     ]
     #   )
     #   # =>
-    #   # shape: (4, 2)
-    #   # ┌─────┬───────────┐
-    #   # │ a   ┆ a_reverse │
-    #   # │ --- ┆ ---       │
-    #   # │ u32 ┆ u32       │
-    #   # ╞═════╪═══════════╡
-    #   # │ 0   ┆ 3         │
-    #   # │ 1   ┆ 2         │
-    #   # │ 2   ┆ 1         │
-    #   # │ 3   ┆ 0         │
-    #   # └─────┴───────────┘
-    def cumcount(reverse: false)
-      wrap_expr(_rbexpr.cumcount(reverse))
+    #   # shape: (4, 3)
+    #   # ┌──────┬───────────┬───────────────────┐
+    #   # │ a    ┆ cum_count ┆ cum_count_reverse │
+    #   # │ ---  ┆ ---       ┆ ---               │
+    #   # │ str  ┆ u32       ┆ u32               │
+    #   # ╞══════╪═══════════╪═══════════════════╡
+    #   # │ x    ┆ 1         ┆ 3                 │
+    #   # │ k    ┆ 2         ┆ 2                 │
+    #   # │ null ┆ 2         ┆ 1                 │
+    #   # │ d    ┆ 3         ┆ 1                 │
+    #   # └──────┴───────────┴───────────────────┘
+    def cum_count(reverse: false)
+      _from_rbexpr(_rbexpr.cum_count(reverse))
     end
+    alias_method :cumcount, :cum_count
 
     # Rounds down to the nearest integer value.
     #
@@ -1084,7 +1126,7 @@ module Polars
     #   # │ 1.0 │
     #   # └─────┘
     def floor
-      wrap_expr(_rbexpr.floor)
+      _from_rbexpr(_rbexpr.floor)
     end
 
     # Rounds up to the nearest integer value.
@@ -1109,7 +1151,7 @@ module Polars
     #   # │ 2.0 │
     #   # └─────┘
     def ceil
-      wrap_expr(_rbexpr.ceil)
+      _from_rbexpr(_rbexpr.ceil)
     end
 
     # Round underlying floating point data by `decimals` digits.
@@ -1135,7 +1177,7 @@ module Polars
     #   # │ 1.2 │
     #   # └─────┘
     def round(decimals = 0)
-      wrap_expr(_rbexpr.round(decimals))
+      _from_rbexpr(_rbexpr.round(decimals))
     end
 
     # Compute the dot/inner product between two Expressions.
@@ -1163,8 +1205,8 @@ module Polars
     #   # │ 44  │
     #   # └─────┘
     def dot(other)
-      other = Utils.expr_to_lit_or_expr(other, str_to_lit: false)
-      wrap_expr(_rbexpr.dot(other._rbexpr))
+      other = Utils.parse_into_expression(other, str_as_lit: false)
+      _from_rbexpr(_rbexpr.dot(other))
     end
 
     # Compute the most occurring value(s).
@@ -1180,7 +1222,7 @@ module Polars
     #       "b" => [1, 1, 2, 2]
     #     }
     #   )
-    #   df.select(Polars.all.mode)
+    #   df.select(Polars.all.mode.first)
     #   # =>
     #   # shape: (2, 2)
     #   # ┌─────┬─────┐
@@ -1192,7 +1234,7 @@ module Polars
     #   # │ 1   ┆ 2   │
     #   # └─────┴─────┘
     def mode
-      wrap_expr(_rbexpr.mode)
+      _from_rbexpr(_rbexpr.mode)
     end
 
     # Cast between data types.
@@ -1231,7 +1273,7 @@ module Polars
     #   # └─────┴─────┘
     def cast(dtype, strict: true)
       dtype = Utils.rb_type_to_dtype(dtype)
-      wrap_expr(_rbexpr.cast(dtype, strict))
+      _from_rbexpr(_rbexpr.cast(dtype, strict))
     end
 
     # Sort this column. In projection/ selection context the whole column is sorted.
@@ -1250,12 +1292,12 @@ module Polars
     #   df = Polars::DataFrame.new(
     #     {
     #       "group" => [
-    #           "one",
-    #           "one",
-    #           "one",
-    #           "two",
-    #           "two",
-    #           "two"
+    #         "one",
+    #         "one",
+    #         "one",
+    #         "two",
+    #         "two",
+    #         "two"
     #       ],
     #       "value" => [1, 98, 2, 3, 99, 4]
     #     }
@@ -1306,7 +1348,7 @@ module Polars
     #   # │ one   ┆ [1, 2, 98] │
     #   # └───────┴────────────┘
     def sort(reverse: false, nulls_last: false)
-      wrap_expr(_rbexpr.sort_with(reverse, nulls_last))
+      _from_rbexpr(_rbexpr.sort_with(reverse, nulls_last))
     end
 
     # Return the `k` largest elements.
@@ -1344,8 +1386,8 @@ module Polars
     #   # │ 2     ┆ 98       │
     #   # └───────┴──────────┘
     def top_k(k: 5)
-      k = Utils.parse_as_expression(k)
-      wrap_expr(_rbexpr.top_k(k))
+      k = Utils.parse_into_expression(k)
+      _from_rbexpr(_rbexpr.top_k(k))
     end
 
     # Return the `k` smallest elements.
@@ -1383,8 +1425,8 @@ module Polars
     #   # │ 2     ┆ 98       │
     #   # └───────┴──────────┘
     def bottom_k(k: 5)
-      k = Utils.parse_as_expression(k)
-      wrap_expr(_rbexpr.bottom_k(k))
+      k = Utils.parse_into_expression(k)
+      _from_rbexpr(_rbexpr.bottom_k(k))
     end
 
     # Get the index values that would sort this column.
@@ -1415,7 +1457,7 @@ module Polars
     #   # │ 2   │
     #   # └─────┘
     def arg_sort(reverse: false, nulls_last: false)
-      wrap_expr(_rbexpr.arg_sort(reverse, nulls_last))
+      _from_rbexpr(_rbexpr.arg_sort(reverse, nulls_last))
     end
 
     # Get the index of the maximal value.
@@ -1439,7 +1481,7 @@ module Polars
     #   # │ 2   │
     #   # └─────┘
     def arg_max
-      wrap_expr(_rbexpr.arg_max)
+      _from_rbexpr(_rbexpr.arg_max)
     end
 
     # Get the index of the minimal value.
@@ -1463,7 +1505,7 @@ module Polars
     #   # │ 1   │
     #   # └─────┘
     def arg_min
-      wrap_expr(_rbexpr.arg_min)
+      _from_rbexpr(_rbexpr.arg_min)
     end
 
     # Find indices where elements should be inserted to maintain order.
@@ -1496,8 +1538,8 @@ module Polars
     #   # │ 0    ┆ 2     ┆ 4   │
     #   # └──────┴───────┴─────┘
     def search_sorted(element, side: "any")
-      element = Utils.expr_to_lit_or_expr(element, str_to_lit: false)
-      wrap_expr(_rbexpr.search_sorted(element._rbexpr, side))
+      element = Utils.parse_into_expression(element, str_as_lit: false)
+      _from_rbexpr(_rbexpr.search_sorted(element, side))
     end
 
     # Sort this column by the ordering of another column, or multiple other columns.
@@ -1542,16 +1584,15 @@ module Polars
     #   # │ one   │
     #   # │ two   │
     #   # └───────┘
-    def sort_by(by, reverse: false)
-      if !by.is_a?(::Array)
-        by = [by]
-      end
-      if !reverse.is_a?(::Array)
-        reverse = [reverse]
-      end
-      by = Utils.selection_to_rbexpr_list(by)
-
-      wrap_expr(_rbexpr.sort_by(by, reverse))
+    def sort_by(by, *more_by, reverse: false, nulls_last: false, multithreaded: true, maintain_order: false)
+      by = Utils.parse_into_list_of_expressions(by, *more_by)
+      reverse = Utils.extend_bool(reverse, by.length, "reverse", "by")
+      nulls_last = Utils.extend_bool(nulls_last, by.length, "nulls_last", "by")
+      _from_rbexpr(
+        _rbexpr.sort_by(
+          by, reverse, nulls_last, multithreaded, maintain_order
+        )
+      )
     end
 
     # Take values by index.
@@ -1586,19 +1627,59 @@ module Polars
     #   # │ one   ┆ [2, 98]   │
     #   # │ two   ┆ [4, 99]   │
     #   # └───────┴───────────┘
-    def take(indices)
+    def gather(indices)
       if indices.is_a?(::Array)
-        indices_lit = Polars.lit(Series.new("", indices, dtype: :u32))
+        indices_lit = Polars.lit(Series.new("", indices, dtype: :u32))._rbexpr
       else
-        indices_lit = Utils.expr_to_lit_or_expr(indices, str_to_lit: false)
+        indices_lit = Utils.parse_into_expression(indices, str_as_lit: false)
       end
-      wrap_expr(_rbexpr.take(indices_lit._rbexpr))
+      _from_rbexpr(_rbexpr.gather(indices_lit))
+    end
+    alias_method :take, :gather
+
+    # Return a single value by index.
+    #
+    # @param index [Object]
+    #   An expression that leads to a UInt32 index.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "group" => [
+    #         "one",
+    #         "one",
+    #         "one",
+    #         "two",
+    #         "two",
+    #         "two"
+    #       ],
+    #       "value" => [1, 98, 2, 3, 99, 4]
+    #     }
+    #   )
+    #   df.group_by("group", maintain_order: true).agg(Polars.col("value").get(1))
+    #   # =>
+    #   # shape: (2, 2)
+    #   # ┌───────┬───────┐
+    #   # │ group ┆ value │
+    #   # │ ---   ┆ ---   │
+    #   # │ str   ┆ i64   │
+    #   # ╞═══════╪═══════╡
+    #   # │ one   ┆ 98    │
+    #   # │ two   ┆ 99    │
+    #   # └───────┴───────┘
+    def get(index)
+      index_lit = Utils.parse_into_expression(index)
+      _from_rbexpr(_rbexpr.get(index_lit))
     end
 
     # Shift the values by a given period.
     #
-    # @param periods [Integer]
+    # @param n [Integer]
     #   Number of places to shift (may be negative).
+    # @param fill_value [Object]
+    #   Fill the resulting null values with this value.
     #
     # @return [Expr]
     #
@@ -1617,8 +1698,12 @@ module Polars
     #   # │ 2    │
     #   # │ 3    │
     #   # └──────┘
-    def shift(periods = 1)
-      wrap_expr(_rbexpr.shift(periods))
+    def shift(n = 1, fill_value: nil)
+      if !fill_value.nil?
+        fill_value = Utils.parse_into_expression(fill_value, str_as_lit: true)
+      end
+      n = Utils.parse_into_expression(n)
+      _from_rbexpr(_rbexpr.shift(n, fill_value))
     end
 
     # Shift the values by a given period and fill the resulting null values.
@@ -1646,8 +1731,7 @@ module Polars
     #   # │ 3   │
     #   # └─────┘
     def shift_and_fill(periods, fill_value)
-      fill_value = Utils.expr_to_lit_or_expr(fill_value, str_to_lit: true)
-      wrap_expr(_rbexpr.shift_and_fill(periods, fill_value._rbexpr))
+      shift(periods, fill_value: fill_value)
     end
 
     # Fill null values using the specified value or strategy.
@@ -1721,10 +1805,10 @@ module Polars
       end
 
       if !value.nil?
-        value = Utils.expr_to_lit_or_expr(value, str_to_lit: true)
-        wrap_expr(_rbexpr.fill_null(value._rbexpr))
+        value = Utils.parse_into_expression(value, str_as_lit: true)
+        _from_rbexpr(_rbexpr.fill_null(value))
       else
-        wrap_expr(_rbexpr.fill_null_with_strategy(strategy, limit))
+        _from_rbexpr(_rbexpr.fill_null_with_strategy(strategy, limit))
       end
     end
 
@@ -1752,8 +1836,8 @@ module Polars
     #   # │ zero ┆ 6.0  │
     #   # └──────┴──────┘
     def fill_nan(fill_value)
-      fill_value = Utils.expr_to_lit_or_expr(fill_value, str_to_lit: true)
-      wrap_expr(_rbexpr.fill_nan(fill_value._rbexpr))
+      fill_value = Utils.parse_into_expression(fill_value, str_as_lit: true)
+      _from_rbexpr(_rbexpr.fill_nan(fill_value))
     end
 
     # Fill missing values with the latest seen values.
@@ -1783,7 +1867,7 @@ module Polars
     #   # │ 2   ┆ 6   │
     #   # └─────┴─────┘
     def forward_fill(limit: nil)
-      wrap_expr(_rbexpr.forward_fill(limit))
+      _from_rbexpr(_rbexpr.forward_fill(limit))
     end
 
     # Fill missing values with the next to be seen values.
@@ -1813,14 +1897,43 @@ module Polars
     #   # │ null ┆ 6   │
     #   # └──────┴─────┘
     def backward_fill(limit: nil)
-      wrap_expr(_rbexpr.backward_fill(limit))
+      _from_rbexpr(_rbexpr.backward_fill(limit))
     end
 
     # Reverse the selection.
     #
     # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "A" => [1, 2, 3, 4, 5],
+    #       "fruits" => ["banana", "banana", "apple", "apple", "banana"],
+    #       "B" => [5, 4, 3, 2, 1],
+    #       "cars" => ["beetle", "audi", "beetle", "beetle", "beetle"]
+    #     }
+    #   )
+    #   df.select(
+    #     [
+    #       Polars.all,
+    #       Polars.all.reverse.name.suffix("_reverse")
+    #     ]
+    #   )
+    #   # =>
+    #   # shape: (5, 8)
+    #   # ┌─────┬────────┬─────┬────────┬───────────┬────────────────┬───────────┬──────────────┐
+    #   # │ A   ┆ fruits ┆ B   ┆ cars   ┆ A_reverse ┆ fruits_reverse ┆ B_reverse ┆ cars_reverse │
+    #   # │ --- ┆ ---    ┆ --- ┆ ---    ┆ ---       ┆ ---            ┆ ---       ┆ ---          │
+    #   # │ i64 ┆ str    ┆ i64 ┆ str    ┆ i64       ┆ str            ┆ i64       ┆ str          │
+    #   # ╞═════╪════════╪═════╪════════╪═══════════╪════════════════╪═══════════╪══════════════╡
+    #   # │ 1   ┆ banana ┆ 5   ┆ beetle ┆ 5         ┆ banana         ┆ 1         ┆ beetle       │
+    #   # │ 2   ┆ banana ┆ 4   ┆ audi   ┆ 4         ┆ apple          ┆ 2         ┆ beetle       │
+    #   # │ 3   ┆ apple  ┆ 3   ┆ beetle ┆ 3         ┆ apple          ┆ 3         ┆ beetle       │
+    #   # │ 4   ┆ apple  ┆ 2   ┆ beetle ┆ 2         ┆ banana         ┆ 4         ┆ audi         │
+    #   # │ 5   ┆ banana ┆ 1   ┆ beetle ┆ 1         ┆ banana         ┆ 5         ┆ beetle       │
+    #   # └─────┴────────┴─────┴────────┴───────────┴────────────────┴───────────┴──────────────┘
     def reverse
-      wrap_expr(_rbexpr.reverse)
+      _from_rbexpr(_rbexpr.reverse)
     end
 
     # Get standard deviation.
@@ -1843,7 +1956,7 @@ module Polars
     #   # │ 1.0 │
     #   # └─────┘
     def std(ddof: 1)
-      wrap_expr(_rbexpr.std(ddof))
+      _from_rbexpr(_rbexpr.std(ddof))
     end
 
     # Get variance.
@@ -1866,7 +1979,7 @@ module Polars
     #   # │ 1.0 │
     #   # └─────┘
     def var(ddof: 1)
-      wrap_expr(_rbexpr.var(ddof))
+      _from_rbexpr(_rbexpr.var(ddof))
     end
 
     # Get maximum value.
@@ -1886,7 +1999,7 @@ module Polars
     #   # │ 1.0 │
     #   # └─────┘
     def max
-      wrap_expr(_rbexpr.max)
+      _from_rbexpr(_rbexpr.max)
     end
 
     # Get minimum value.
@@ -1906,7 +2019,7 @@ module Polars
     #   # │ -1.0 │
     #   # └──────┘
     def min
-      wrap_expr(_rbexpr.min)
+      _from_rbexpr(_rbexpr.min)
     end
 
     # Get maximum value, but propagate/poison encountered NaN values.
@@ -1926,7 +2039,7 @@ module Polars
     #   # │ NaN │
     #   # └─────┘
     def nan_max
-      wrap_expr(_rbexpr.nan_max)
+      _from_rbexpr(_rbexpr.nan_max)
     end
 
     # Get minimum value, but propagate/poison encountered NaN values.
@@ -1946,7 +2059,7 @@ module Polars
     #   # │ NaN │
     #   # └─────┘
     def nan_min
-      wrap_expr(_rbexpr.nan_min)
+      _from_rbexpr(_rbexpr.nan_min)
     end
 
     # Get sum value.
@@ -1970,7 +2083,7 @@ module Polars
     #   # │ 0   │
     #   # └─────┘
     def sum
-      wrap_expr(_rbexpr.sum)
+      _from_rbexpr(_rbexpr.sum)
     end
 
     # Get mean value.
@@ -1990,7 +2103,7 @@ module Polars
     #   # │ 0.0 │
     #   # └─────┘
     def mean
-      wrap_expr(_rbexpr.mean)
+      _from_rbexpr(_rbexpr.mean)
     end
 
     # Get median value using linear interpolation.
@@ -2010,7 +2123,7 @@ module Polars
     #   # │ 0.0 │
     #   # └─────┘
     def median
-      wrap_expr(_rbexpr.median)
+      _from_rbexpr(_rbexpr.median)
     end
 
     # Compute the product of an expression.
@@ -2030,7 +2143,7 @@ module Polars
     #   # │ 6   │
     #   # └─────┘
     def product
-      wrap_expr(_rbexpr.product)
+      _from_rbexpr(_rbexpr.product)
     end
 
     # Count unique values.
@@ -2050,7 +2163,7 @@ module Polars
     #   # │ 2   │
     #   # └─────┘
     def n_unique
-      wrap_expr(_rbexpr.n_unique)
+      _from_rbexpr(_rbexpr.n_unique)
     end
 
     # Approx count unique values.
@@ -2061,7 +2174,7 @@ module Polars
     #
     # @example
     #   df = Polars::DataFrame.new({"a" => [1, 1, 2]})
-    #   df.select(Polars.col("a").approx_unique)
+    #   df.select(Polars.col("a").approx_n_unique)
     #   # =>
     #   # shape: (1, 1)
     #   # ┌─────┐
@@ -2071,9 +2184,10 @@ module Polars
     #   # ╞═════╡
     #   # │ 2   │
     #   # └─────┘
-    def approx_unique
-      wrap_expr(_rbexpr.approx_n_unique)
+    def approx_n_unique
+      _from_rbexpr(_rbexpr.approx_n_unique)
     end
+    alias_method :approx_unique, :approx_n_unique
 
     # Count null values.
     #
@@ -2097,7 +2211,7 @@ module Polars
     #   # │ 2   ┆ 0   │
     #   # └─────┴─────┘
     def null_count
-      wrap_expr(_rbexpr.null_count)
+      _from_rbexpr(_rbexpr.null_count)
     end
 
     # Get index of first unique value.
@@ -2137,7 +2251,7 @@ module Polars
     #   # │ 1   │
     #   # └─────┘
     def arg_unique
-      wrap_expr(_rbexpr.arg_unique)
+      _from_rbexpr(_rbexpr.arg_unique)
     end
 
     # Get unique values of this expression.
@@ -2162,9 +2276,9 @@ module Polars
     #   # └─────┘
     def unique(maintain_order: false)
       if maintain_order
-        wrap_expr(_rbexpr.unique_stable)
+        _from_rbexpr(_rbexpr.unique_stable)
       else
-        wrap_expr(_rbexpr.unique)
+        _from_rbexpr(_rbexpr.unique)
       end
     end
 
@@ -2185,7 +2299,7 @@ module Polars
     #   # │ 1   │
     #   # └─────┘
     def first
-      wrap_expr(_rbexpr.first)
+      _from_rbexpr(_rbexpr.first)
     end
 
     # Get the last value.
@@ -2205,7 +2319,7 @@ module Polars
     #   # │ 2   │
     #   # └─────┘
     def last
-      wrap_expr(_rbexpr.last)
+      _from_rbexpr(_rbexpr.last)
     end
 
     # Apply window function over a subgroup.
@@ -2268,8 +2382,8 @@ module Polars
     #   # │ 4      │
     #   # └────────┘
     def over(expr)
-      rbexprs = Utils.selection_to_rbexpr_list(expr)
-      wrap_expr(_rbexpr.over(rbexprs))
+      rbexprs = Utils.parse_into_list_of_expressions(expr)
+      _from_rbexpr(_rbexpr.over(rbexprs))
     end
 
     # Get mask of unique values.
@@ -2291,7 +2405,7 @@ module Polars
     #   # │ true  │
     #   # └───────┘
     def is_unique
-      wrap_expr(_rbexpr.is_unique)
+      _from_rbexpr(_rbexpr.is_unique)
     end
 
     # Get a mask of the first unique value.
@@ -2319,7 +2433,7 @@ module Polars
     #   # │ 5   ┆ true     │
     #   # └─────┴──────────┘
     def is_first_distinct
-      wrap_expr(_rbexpr.is_first_distinct)
+      _from_rbexpr(_rbexpr.is_first_distinct)
     end
     alias_method :is_first, :is_first_distinct
 
@@ -2342,7 +2456,7 @@ module Polars
     #   # │ false │
     #   # └───────┘
     def is_duplicated
-      wrap_expr(_rbexpr.is_duplicated)
+      _from_rbexpr(_rbexpr.is_duplicated)
     end
 
     # Get a boolean mask of the local maximum peaks.
@@ -2366,7 +2480,7 @@ module Polars
     #   # │ true  │
     #   # └───────┘
     def peak_max
-      wrap_expr(_rbexpr.peak_max)
+      _from_rbexpr(_rbexpr.peak_max)
     end
 
     # Get a boolean mask of the local minimum peaks.
@@ -2390,7 +2504,7 @@ module Polars
     #   # │ false │
     #   # └───────┘
     def peak_min
-      wrap_expr(_rbexpr.peak_min)
+      _from_rbexpr(_rbexpr.peak_min)
     end
 
     # Get quantile value.
@@ -2412,7 +2526,7 @@ module Polars
     #   # │ --- │
     #   # │ f64 │
     #   # ╞═════╡
-    #   # │ 1.0 │
+    #   # │ 2.0 │
     #   # └─────┘
     #
     # @example
@@ -2463,8 +2577,208 @@ module Polars
     #   # │ 1.5 │
     #   # └─────┘
     def quantile(quantile, interpolation: "nearest")
-      quantile = Utils.expr_to_lit_or_expr(quantile, str_to_lit: false)
-      wrap_expr(_rbexpr.quantile(quantile._rbexpr, interpolation))
+      quantile = Utils.parse_into_expression(quantile, str_as_lit: false)
+      _from_rbexpr(_rbexpr.quantile(quantile, interpolation))
+    end
+
+    # Bin continuous values into discrete categories.
+    #
+    # @param breaks [Array]
+    #   List of unique cut points.
+    # @param labels [Array]
+    #   Names of the categories. The number of labels must be equal to the number
+    #   of cut points plus one.
+    # @param left_closed [Boolean]
+    #   Set the intervals to be left-closed instead of right-closed.
+    # @param include_breaks [Boolean]
+    #   Include a column with the right endpoint of the bin each observation falls
+    #   in. This will change the data type of the output from a
+    #   `Categorical` to a `Struct`.
+    #
+    # @return [Expr]
+    #
+    # @example Divide a column into three categories.
+    #   df = Polars::DataFrame.new({"foo" => [-2, -1, 0, 1, 2]})
+    #   df.with_columns(
+    #     Polars.col("foo").cut([-1, 1], labels: ["a", "b", "c"]).alias("cut")
+    #   )
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬─────┐
+    #   # │ foo ┆ cut │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ cat │
+    #   # ╞═════╪═════╡
+    #   # │ -2  ┆ a   │
+    #   # │ -1  ┆ a   │
+    #   # │ 0   ┆ b   │
+    #   # │ 1   ┆ b   │
+    #   # │ 2   ┆ c   │
+    #   # └─────┴─────┘
+    #
+    # @example Add both the category and the breakpoint.
+    #   df.with_columns(
+    #     Polars.col("foo").cut([-1, 1], include_breaks: true).alias("cut")
+    #   ).unnest("cut")
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬────────────┬────────────┐
+    #   # │ foo ┆ breakpoint ┆ category   │
+    #   # │ --- ┆ ---        ┆ ---        │
+    #   # │ i64 ┆ f64        ┆ cat        │
+    #   # ╞═════╪════════════╪════════════╡
+    #   # │ -2  ┆ -1.0       ┆ (-inf, -1] │
+    #   # │ -1  ┆ -1.0       ┆ (-inf, -1] │
+    #   # │ 0   ┆ 1.0        ┆ (-1, 1]    │
+    #   # │ 1   ┆ 1.0        ┆ (-1, 1]    │
+    #   # │ 2   ┆ inf        ┆ (1, inf]   │
+    #   # └─────┴────────────┴────────────┘
+    def cut(breaks, labels: nil, left_closed: false, include_breaks: false)
+      _from_rbexpr(_rbexpr.cut(breaks, labels, left_closed, include_breaks))
+    end
+
+    # Bin continuous values into discrete categories based on their quantiles.
+    #
+    # @param quantiles [Array]
+    #   Either a list of quantile probabilities between 0 and 1 or a positive
+    #   integer determining the number of bins with uniform probability.
+    # @param labels [Array]
+    #   Names of the categories. The number of labels must be equal to the number
+    #   of categories.
+    # @param left_closed [Boolean]
+    #   Set the intervals to be left-closed instead of right-closed.
+    # @param allow_duplicates [Boolean]
+    #   If set to `true`, duplicates in the resulting quantiles are dropped,
+    #   rather than raising a `DuplicateError`. This can happen even with unique
+    #   probabilities, depending on the data.
+    # @param include_breaks [Boolean]
+    #   Include a column with the right endpoint of the bin each observation falls
+    #   in. This will change the data type of the output from a
+    #   `Categorical` to a `Struct`.
+    #
+    # @return [Expr]
+    #
+    # @example Divide a column into three categories according to pre-defined quantile probabilities.
+    #   df = Polars::DataFrame.new({"foo" => [-2, -1, 0, 1, 2]})
+    #   df.with_columns(
+    #     Polars.col("foo").qcut([0.25, 0.75], labels: ["a", "b", "c"]).alias("qcut")
+    #   )
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬──────┐
+    #   # │ foo ┆ qcut │
+    #   # │ --- ┆ ---  │
+    #   # │ i64 ┆ cat  │
+    #   # ╞═════╪══════╡
+    #   # │ -2  ┆ a    │
+    #   # │ -1  ┆ a    │
+    #   # │ 0   ┆ b    │
+    #   # │ 1   ┆ b    │
+    #   # │ 2   ┆ c    │
+    #   # └─────┴──────┘
+    #
+    # @example Divide a column into two categories using uniform quantile probabilities.
+    #   df.with_columns(
+    #     Polars.col("foo")
+    #       .qcut(2, labels: ["low", "high"], left_closed: true)
+    #       .alias("qcut")
+    #   )
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬──────┐
+    #   # │ foo ┆ qcut │
+    #   # │ --- ┆ ---  │
+    #   # │ i64 ┆ cat  │
+    #   # ╞═════╪══════╡
+    #   # │ -2  ┆ low  │
+    #   # │ -1  ┆ low  │
+    #   # │ 0   ┆ high │
+    #   # │ 1   ┆ high │
+    #   # │ 2   ┆ high │
+    #   # └─────┴──────┘
+    #
+    # @example Add both the category and the breakpoint.
+    #   df.with_columns(
+    #     Polars.col("foo").qcut([0.25, 0.75], include_breaks: true).alias("qcut")
+    #   ).unnest("qcut")
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬────────────┬────────────┐
+    #   # │ foo ┆ breakpoint ┆ category   │
+    #   # │ --- ┆ ---        ┆ ---        │
+    #   # │ i64 ┆ f64        ┆ cat        │
+    #   # ╞═════╪════════════╪════════════╡
+    #   # │ -2  ┆ -1.0       ┆ (-inf, -1] │
+    #   # │ -1  ┆ -1.0       ┆ (-inf, -1] │
+    #   # │ 0   ┆ 1.0        ┆ (-1, 1]    │
+    #   # │ 1   ┆ 1.0        ┆ (-1, 1]    │
+    #   # │ 2   ┆ inf        ┆ (1, inf]   │
+    #   # └─────┴────────────┴────────────┘
+    def qcut(quantiles, labels: nil, left_closed: false, allow_duplicates: false, include_breaks: false)
+      if quantiles.is_a?(Integer)
+        rbexpr = _rbexpr.qcut_uniform(
+          quantiles, labels, left_closed, allow_duplicates, include_breaks
+        )
+      else
+        rbexpr = _rbexpr.qcut(
+          quantiles, labels, left_closed, allow_duplicates, include_breaks
+        )
+      end
+
+      _from_rbexpr(rbexpr)
+    end
+
+    # Get the lengths of runs of identical values.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(Polars::Series.new("s", [1, 1, 2, 1, nil, 1, 3, 3]))
+    #   df.select(Polars.col("s").rle).unnest("s")
+    #   # =>
+    #   # shape: (6, 2)
+    #   # ┌─────┬───────┐
+    #   # │ len ┆ value │
+    #   # │ --- ┆ ---   │
+    #   # │ u32 ┆ i64   │
+    #   # ╞═════╪═══════╡
+    #   # │ 2   ┆ 1     │
+    #   # │ 1   ┆ 2     │
+    #   # │ 1   ┆ 1     │
+    #   # │ 1   ┆ null  │
+    #   # │ 1   ┆ 1     │
+    #   # │ 2   ┆ 3     │
+    #   # └─────┴───────┘
+    def rle
+      _from_rbexpr(_rbexpr.rle)
+    end
+
+    # Map values to run IDs.
+    #
+    # Similar to RLE, but it maps each value to an ID corresponding to the run into
+    # which it falls. This is especially useful when you want to define groups by
+    # runs of identical values rather than the values themselves.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a" => [1, 2, 1, 1, 1], "b" => ["x", "x", nil, "y", "y"]})
+    #   df.with_columns([Polars.col("a").rle_id.alias("a_r"), Polars.struct(["a", "b"]).rle_id.alias("ab_r")])
+    #   # =>
+    #   # shape: (5, 4)
+    #   # ┌─────┬──────┬─────┬──────┐
+    #   # │ a   ┆ b    ┆ a_r ┆ ab_r │
+    #   # │ --- ┆ ---  ┆ --- ┆ ---  │
+    #   # │ i64 ┆ str  ┆ u32 ┆ u32  │
+    #   # ╞═════╪══════╪═════╪══════╡
+    #   # │ 1   ┆ x    ┆ 0   ┆ 0    │
+    #   # │ 2   ┆ x    ┆ 1   ┆ 1    │
+    #   # │ 1   ┆ null ┆ 2   ┆ 2    │
+    #   # │ 1   ┆ y    ┆ 2   ┆ 3    │
+    #   # │ 1   ┆ y    ┆ 2   ┆ 3    │
+    #   # └─────┴──────┴─────┴──────┘
+    def rle_id
+      _from_rbexpr(_rbexpr.rle_id)
     end
 
     # Filter a single column.
@@ -2503,7 +2817,7 @@ module Polars
     #   # │ g2        ┆ 0   ┆ 3   │
     #   # └───────────┴─────┴─────┘
     def filter(predicate)
-      wrap_expr(_rbexpr.filter(predicate._rbexpr))
+      _from_rbexpr(_rbexpr.filter(predicate._rbexpr))
     end
 
     # Filter a single column.
@@ -2557,6 +2871,9 @@ module Polars
     #   Dtype of the output Series.
     # @param agg_list [Boolean]
     #   Aggregate list.
+    # @param is_elementwise [Boolean]
+    #   If set to true this can run in the streaming engine, but may yield
+    #   incorrect results in group-by. Ensure you know what you are doing!
     #
     # @return [Expr]
     #
@@ -2577,12 +2894,22 @@ module Polars
     #   # ╞══════╪════════╡
     #   # │ 1    ┆ 0      │
     #   # └──────┴────────┘
-    # def map(return_dtype: nil, agg_list: false, &f)
+    # def map_batches(return_dtype: nil, agg_list: false, is_elementwise: false, returns_scalar: false, &f)
     #   if !return_dtype.nil?
     #     return_dtype = Utils.rb_type_to_dtype(return_dtype)
     #   end
-    #   wrap_expr(_rbexpr.map(f, return_dtype, agg_list))
+    #   _from_rbexpr(
+    #     _rbexpr.map_batches(
+    #       # TODO _map_batches_wrapper
+    #       f,
+    #       return_dtype,
+    #       agg_list,
+    #       is_elementwise,
+    #       returns_scalar
+    #     )
+    #   )
     # end
+    # alias_method :map, :map_batches
 
     # Apply a custom/user-defined function (UDF) in a GroupBy or Projection context.
     #
@@ -2624,7 +2951,7 @@ module Polars
     #
     # @example In a selection context, the function is applied by row.
     #   df.with_column(
-    #     Polars.col("a").apply { |x| x * 2 }.alias("a_times_2")
+    #     Polars.col("a").map_elements { |x| x * 2 }.alias("a_times_2")
     #   )
     #   # =>
     #   # shape: (4, 3)
@@ -2644,7 +2971,7 @@ module Polars
     #     .group_by("b", maintain_order: true)
     #     .agg(
     #       [
-    #         Polars.col("a").apply { |x| x.sum }
+    #         Polars.col("a").map_elements { |x| x.sum }
     #       ]
     #     )
     #     .collect
@@ -2659,12 +2986,23 @@ module Polars
     #   # │ b   ┆ 2   │
     #   # │ c   ┆ 4   │
     #   # └─────┴─────┘
-    # def apply(return_dtype: nil, &f)
-    #   wrap_f = lambda do |x|
-    #     x.apply(return_dtype: return_dtype, &f)
+    # def map_elements(
+    #   return_dtype: nil,
+    #   skip_nulls: true,
+    #   pass_name: false,
+    #   strategy: "thread_local",
+    #   &f
+    # )
+    #   if pass_name
+    #     raise Todo
+    #   else
+    #     wrap_f = lambda do |x|
+    #       x.map_elements(return_dtype: return_dtype, skip_nulls: skip_nulls, &f)
+    #     end
     #   end
-    #   map(agg_list: true, return_dtype: return_dtype, &wrap_f)
+    #   map_batches(agg_list: true, return_dtype: return_dtype, &wrap_f)
     # end
+    # alias_method :apply, :map_elements
 
     # Explode a list or utf8 Series. This means that every item is expanded to a new
     # row.
@@ -2692,7 +3030,7 @@ module Polars
     #  # │ b     ┆ [2, 3, 4] │
     #  # └───────┴───────────┘
     def flatten
-      wrap_expr(_rbexpr.explode)
+      _from_rbexpr(_rbexpr.explode)
     end
 
     # Explode a list or utf8 Series.
@@ -2719,7 +3057,7 @@ module Polars
     #   # │ 6   │
     #   # └─────┘
     def explode
-      wrap_expr(_rbexpr.explode)
+      _from_rbexpr(_rbexpr.explode)
     end
 
     # Take every nth value in the Series and return as a new Series.
@@ -2728,7 +3066,7 @@ module Polars
     #
     # @example
     #   df = Polars::DataFrame.new({"foo" => [1, 2, 3, 4, 5, 6, 7, 8, 9]})
-    #   df.select(Polars.col("foo").take_every(3))
+    #   df.select(Polars.col("foo").gather_every(3))
     #   # =>
     #   # shape: (3, 1)
     #   # ┌─────┐
@@ -2740,9 +3078,10 @@ module Polars
     #   # │ 4   │
     #   # │ 7   │
     #   # └─────┘
-    def take_every(n)
-      wrap_expr(_rbexpr.take_every(n))
+    def gather_every(n, offset = 0)
+      _from_rbexpr(_rbexpr.gather_every(n, offset))
     end
+    alias_method :take_every, :gather_every
 
     # Get the first `n` rows.
     #
@@ -2766,7 +3105,7 @@ module Polars
     #   # │ 3   │
     #   # └─────┘
     def head(n = 10)
-      wrap_expr(_rbexpr.head(n))
+      _from_rbexpr(_rbexpr.head(n))
     end
 
     # Get the last `n` rows.
@@ -2791,7 +3130,7 @@ module Polars
     #   # │ 7   │
     #   # └─────┘
     def tail(n = 10)
-      wrap_expr(_rbexpr.tail(n))
+      _from_rbexpr(_rbexpr.tail(n))
     end
 
     # Get the first `n` rows.
@@ -2802,8 +3141,517 @@ module Polars
     #   Number of rows to return.
     #
     # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"foo" => [1, 2, 3, 4, 5, 6, 7]})
+    #   df.select(Polars.col("foo").limit(3))
+    #   # =>
+    #   # shape: (3, 1)
+    #   # ┌─────┐
+    #   # │ foo │
+    #   # │ --- │
+    #   # │ i64 │
+    #   # ╞═════╡
+    #   # │ 1   │
+    #   # │ 2   │
+    #   # │ 3   │
+    #   # └─────┘
     def limit(n = 10)
       head(n)
+    end
+
+    # Method equivalent of equality operator `expr == other`.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [1.0, 2.0, Float::NAN, 4.0],
+    #       "y" => [2.0, 2.0, Float::NAN, 4.0]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").eq(Polars.col("y")).alias("x == y")
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬────────┐
+    #   # │ x   ┆ y   ┆ x == y │
+    #   # │ --- ┆ --- ┆ ---    │
+    #   # │ f64 ┆ f64 ┆ bool   │
+    #   # ╞═════╪═════╪════════╡
+    #   # │ 1.0 ┆ 2.0 ┆ false  │
+    #   # │ 2.0 ┆ 2.0 ┆ true   │
+    #   # │ NaN ┆ NaN ┆ true   │
+    #   # │ 4.0 ┆ 4.0 ┆ true   │
+    #   # └─────┴─────┴────────┘
+    def eq(other)
+      self == other
+    end
+
+    # Method equivalent of equality operator `expr == other` where `None == None`.
+    #
+    # This differs from default `eq` where null values are propagated.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     data={
+    #       "x" => [1.0, 2.0, Float::NAN, 4.0, nil, nil],
+    #       "y" => [2.0, 2.0, Float::NAN, 4.0, 5.0, nil]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").eq(Polars.col("y")).alias("x eq y"),
+    #     Polars.col("x").eq_missing(Polars.col("y")).alias("x eq_missing y")
+    #   )
+    #   # =>
+    #   # shape: (6, 4)
+    #   # ┌──────┬──────┬────────┬────────────────┐
+    #   # │ x    ┆ y    ┆ x eq y ┆ x eq_missing y │
+    #   # │ ---  ┆ ---  ┆ ---    ┆ ---            │
+    #   # │ f64  ┆ f64  ┆ bool   ┆ bool           │
+    #   # ╞══════╪══════╪════════╪════════════════╡
+    #   # │ 1.0  ┆ 2.0  ┆ false  ┆ false          │
+    #   # │ 2.0  ┆ 2.0  ┆ true   ┆ true           │
+    #   # │ NaN  ┆ NaN  ┆ true   ┆ true           │
+    #   # │ 4.0  ┆ 4.0  ┆ true   ┆ true           │
+    #   # │ null ┆ 5.0  ┆ null   ┆ false          │
+    #   # │ null ┆ null ┆ null   ┆ true           │
+    #   # └──────┴──────┴────────┴────────────────┘
+    def eq_missing(other)
+      other = Utils.parse_into_expression(other, str_as_lit: true)
+      _from_rbexpr(_rbexpr.eq_missing(other))
+    end
+
+    # Method equivalent of "greater than or equal" operator `expr >= other`.
+    #
+    # @param other [Object]
+    #     A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [5.0, 4.0, Float::NAN, 2.0],
+    #       "y" => [5.0, 3.0, Float::NAN, 1.0]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").ge(Polars.col("y")).alias("x >= y")
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬────────┐
+    #   # │ x   ┆ y   ┆ x >= y │
+    #   # │ --- ┆ --- ┆ ---    │
+    #   # │ f64 ┆ f64 ┆ bool   │
+    #   # ╞═════╪═════╪════════╡
+    #   # │ 5.0 ┆ 5.0 ┆ true   │
+    #   # │ 4.0 ┆ 3.0 ┆ true   │
+    #   # │ NaN ┆ NaN ┆ true   │
+    #   # │ 2.0 ┆ 1.0 ┆ true   │
+    #   # └─────┴─────┴────────┘
+    def ge(other)
+      self >= other
+    end
+
+    # Method equivalent of "greater than" operator `expr > other`.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [5.0, 4.0, Float::NAN, 2.0],
+    #       "y" => [5.0, 3.0, Float::NAN, 1.0]
+    #     }
+    #   )
+    #   df.with_columns(
+    #       Polars.col("x").gt(Polars.col("y")).alias("x > y")
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬───────┐
+    #   # │ x   ┆ y   ┆ x > y │
+    #   # │ --- ┆ --- ┆ ---   │
+    #   # │ f64 ┆ f64 ┆ bool  │
+    #   # ╞═════╪═════╪═══════╡
+    #   # │ 5.0 ┆ 5.0 ┆ false │
+    #   # │ 4.0 ┆ 3.0 ┆ true  │
+    #   # │ NaN ┆ NaN ┆ false │
+    #   # │ 2.0 ┆ 1.0 ┆ true  │
+    #   # └─────┴─────┴───────┘
+    def gt(other)
+      self > other
+    end
+
+    # Method equivalent of "less than or equal" operator `expr <= other`.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [5.0, 4.0, Float::NAN, 0.5],
+    #       "y" => [5.0, 3.5, Float::NAN, 2.0]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").le(Polars.col("y")).alias("x <= y")
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬────────┐
+    #   # │ x   ┆ y   ┆ x <= y │
+    #   # │ --- ┆ --- ┆ ---    │
+    #   # │ f64 ┆ f64 ┆ bool   │
+    #   # ╞═════╪═════╪════════╡
+    #   # │ 5.0 ┆ 5.0 ┆ true   │
+    #   # │ 4.0 ┆ 3.5 ┆ false  │
+    #   # │ NaN ┆ NaN ┆ true   │
+    #   # │ 0.5 ┆ 2.0 ┆ true   │
+    #   # └─────┴─────┴────────┘
+    def le(other)
+      self <= other
+    end
+
+    # Method equivalent of "less than" operator `expr < other`.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [1.0, 2.0, Float::NAN, 3.0],
+    #       "y" => [2.0, 2.0, Float::NAN, 4.0]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").lt(Polars.col("y")).alias("x < y"),
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬───────┐
+    #   # │ x   ┆ y   ┆ x < y │
+    #   # │ --- ┆ --- ┆ ---   │
+    #   # │ f64 ┆ f64 ┆ bool  │
+    #   # ╞═════╪═════╪═══════╡
+    #   # │ 1.0 ┆ 2.0 ┆ true  │
+    #   # │ 2.0 ┆ 2.0 ┆ false │
+    #   # │ NaN ┆ NaN ┆ false │
+    #   # │ 3.0 ┆ 4.0 ┆ true  │
+    #   # └─────┴─────┴───────┘
+    def lt(other)
+      self < other
+    end
+
+    # Method equivalent of inequality operator `expr != other`.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [1.0, 2.0, Float::NAN, 4.0],
+    #       "y" => [2.0, 2.0, Float::NAN, 4.0]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").ne(Polars.col("y")).alias("x != y"),
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬────────┐
+    #   # │ x   ┆ y   ┆ x != y │
+    #   # │ --- ┆ --- ┆ ---    │
+    #   # │ f64 ┆ f64 ┆ bool   │
+    #   # ╞═════╪═════╪════════╡
+    #   # │ 1.0 ┆ 2.0 ┆ true   │
+    #   # │ 2.0 ┆ 2.0 ┆ false  │
+    #   # │ NaN ┆ NaN ┆ false  │
+    #   # │ 4.0 ┆ 4.0 ┆ false  │
+    #   # └─────┴─────┴────────┘
+    def ne(other)
+      self != other
+    end
+
+    # Method equivalent of equality operator `expr != other` where `None == None`.
+    #
+    # This differs from default `ne` where null values are propagated.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "x" => [1.0, 2.0, Float::NAN, 4.0, nil, nil],
+    #       "y" => [2.0, 2.0, Float::NAN, 4.0, 5.0, nil]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").ne(Polars.col("y")).alias("x ne y"),
+    #     Polars.col("x").ne_missing(Polars.col("y")).alias("x ne_missing y")
+    #   )
+    #   # =>
+    #   # shape: (6, 4)
+    #   # ┌──────┬──────┬────────┬────────────────┐
+    #   # │ x    ┆ y    ┆ x ne y ┆ x ne_missing y │
+    #   # │ ---  ┆ ---  ┆ ---    ┆ ---            │
+    #   # │ f64  ┆ f64  ┆ bool   ┆ bool           │
+    #   # ╞══════╪══════╪════════╪════════════════╡
+    #   # │ 1.0  ┆ 2.0  ┆ true   ┆ true           │
+    #   # │ 2.0  ┆ 2.0  ┆ false  ┆ false          │
+    #   # │ NaN  ┆ NaN  ┆ false  ┆ false          │
+    #   # │ 4.0  ┆ 4.0  ┆ false  ┆ false          │
+    #   # │ null ┆ 5.0  ┆ null   ┆ true           │
+    #   # │ null ┆ null ┆ null   ┆ false          │
+    #   # └──────┴──────┴────────┴────────────────┘
+    def ne_missing(other)
+      other = Utils.parse_into_expression(other, str_as_lit: true)
+      _from_rbexpr(_rbexpr.neq_missing(other))
+    end
+
+    # Method equivalent of addition operator `expr + other`.
+    #
+    # @param other [Object]
+    #   numeric or string value; accepts expression input.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"x" => [1, 2, 3, 4, 5]})
+    #   df.with_columns(
+    #     Polars.col("x").add(2).alias("x+int"),
+    #     Polars.col("x").add(Polars.col("x").cum_prod).alias("x+expr")
+    #   )
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬───────┬────────┐
+    #   # │ x   ┆ x+int ┆ x+expr │
+    #   # │ --- ┆ ---   ┆ ---    │
+    #   # │ i64 ┆ i64   ┆ i64    │
+    #   # ╞═════╪═══════╪════════╡
+    #   # │ 1   ┆ 3     ┆ 2      │
+    #   # │ 2   ┆ 4     ┆ 4      │
+    #   # │ 3   ┆ 5     ┆ 9      │
+    #   # │ 4   ┆ 6     ┆ 28     │
+    #   # │ 5   ┆ 7     ┆ 125    │
+    #   # └─────┴───────┴────────┘
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {"x" => ["a", "d", "g"], "y": ["b", "e", "h"], "z": ["c", "f", "i"]}
+    #   )
+    #   df.with_columns(Polars.col("x").add(Polars.col("y")).add(Polars.col("z")).alias("xyz"))
+    #   # =>
+    #   # shape: (3, 4)
+    #   # ┌─────┬─────┬─────┬─────┐
+    #   # │ x   ┆ y   ┆ z   ┆ xyz │
+    #   # │ --- ┆ --- ┆ --- ┆ --- │
+    #   # │ str ┆ str ┆ str ┆ str │
+    #   # ╞═════╪═════╪═════╪═════╡
+    #   # │ a   ┆ b   ┆ c   ┆ abc │
+    #   # │ d   ┆ e   ┆ f   ┆ def │
+    #   # │ g   ┆ h   ┆ i   ┆ ghi │
+    #   # └─────┴─────┴─────┴─────┘
+    def add(other)
+      self + other
+    end
+
+    # Method equivalent of integer division operator `expr // other`.
+    #
+    # @param other [Object]
+    #   Numeric literal or expression value.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"x" => [1, 2, 3, 4, 5]})
+    #   df.with_columns(
+    #     Polars.col("x").truediv(2).alias("x/2"),
+    #     Polars.col("x").floordiv(2).alias("x//2")
+    #   )
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬─────┬──────┐
+    #   # │ x   ┆ x/2 ┆ x//2 │
+    #   # │ --- ┆ --- ┆ ---  │
+    #   # │ i64 ┆ f64 ┆ i64  │
+    #   # ╞═════╪═════╪══════╡
+    #   # │ 1   ┆ 0.5 ┆ 0    │
+    #   # │ 2   ┆ 1.0 ┆ 1    │
+    #   # │ 3   ┆ 1.5 ┆ 1    │
+    #   # │ 4   ┆ 2.0 ┆ 2    │
+    #   # │ 5   ┆ 2.5 ┆ 2    │
+    #   # └─────┴─────┴──────┘
+    def floordiv(other)
+      _from_rbexpr(_rbexpr.floordiv(_to_rbexpr(other)))
+    end
+
+    # Method equivalent of modulus operator `expr % other`.
+    #
+    # @param other [Object]
+    #   Numeric literal or expression value.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"x" => [0, 1, 2, 3, 4]})
+    #   df.with_columns(Polars.col("x").mod(2).alias("x%2"))
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬─────┐
+    #   # │ x   ┆ x%2 │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 0   ┆ 0   │
+    #   # │ 1   ┆ 1   │
+    #   # │ 2   ┆ 0   │
+    #   # │ 3   ┆ 1   │
+    #   # │ 4   ┆ 0   │
+    #   # └─────┴─────┘
+    def mod(other)
+      self % other
+    end
+
+    # Method equivalent of multiplication operator `expr * other`.
+    #
+    # @param other [Object]
+    #   Numeric literal or expression value.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"x" => [1, 2, 4, 8, 16]})
+    #   df.with_columns(
+    #     Polars.col("x").mul(2).alias("x*2"),
+    #     Polars.col("x").mul(Polars.col("x").log(2)).alias("x * xlog2"),
+    #   )
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬─────┬───────────┐
+    #   # │ x   ┆ x*2 ┆ x * xlog2 │
+    #   # │ --- ┆ --- ┆ ---       │
+    #   # │ i64 ┆ i64 ┆ f64       │
+    #   # ╞═════╪═════╪═══════════╡
+    #   # │ 1   ┆ 2   ┆ 0.0       │
+    #   # │ 2   ┆ 4   ┆ 2.0       │
+    #   # │ 4   ┆ 8   ┆ 8.0       │
+    #   # │ 8   ┆ 16  ┆ 24.0      │
+    #   # │ 16  ┆ 32  ┆ 64.0      │
+    #   # └─────┴─────┴───────────┘
+    def mul(other)
+      self * other
+    end
+
+    # Method equivalent of subtraction operator `expr - other`.
+    #
+    # @param other [Object]
+    #   Numeric literal or expression value.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"x" => [0, 1, 2, 3, 4]})
+    #   df.with_columns(
+    #     Polars.col("x").sub(2).alias("x-2"),
+    #     Polars.col("x").sub(Polars.col("x").cum_sum).alias("x-expr"),
+    #   )
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬─────┬────────┐
+    #   # │ x   ┆ x-2 ┆ x-expr │
+    #   # │ --- ┆ --- ┆ ---    │
+    #   # │ i64 ┆ i64 ┆ i64    │
+    #   # ╞═════╪═════╪════════╡
+    #   # │ 0   ┆ -2  ┆ 0      │
+    #   # │ 1   ┆ -1  ┆ 0      │
+    #   # │ 2   ┆ 0   ┆ -1     │
+    #   # │ 3   ┆ 1   ┆ -3     │
+    #   # │ 4   ┆ 2   ┆ -6     │
+    #   # └─────┴─────┴────────┘
+    def sub(other)
+      self - other
+    end
+
+    # Method equivalent of unary minus operator `-expr`.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a" => [-1, 0, 2, nil]})
+    #   df.with_columns(Polars.col("a").neg)
+    #   # =>
+    #   # shape: (4, 1)
+    #   # ┌──────┐
+    #   # │ a    │
+    #   # │ ---  │
+    #   # │ i64  │
+    #   # ╞══════╡
+    #   # │ 1    │
+    #   # │ 0    │
+    #   # │ -2   │
+    #   # │ null │
+    #   # └──────┘
+    def neg
+      -self
+    end
+
+    # Method equivalent of float division operator `expr / other`.
+    #
+    # @param other [Object]
+    #   Numeric literal or expression value.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {"x" => [-2, -1, 0, 1, 2], "y" => [0.5, 0.0, 0.0, -4.0, -0.5]}
+    #   )
+    #   df.with_columns(
+    #     Polars.col("x").truediv(2).alias("x/2"),
+    #     Polars.col("x").truediv(Polars.col("y")).alias("x/y")
+    #   )
+    #   # =>
+    #   # shape: (5, 4)
+    #   # ┌─────┬──────┬──────┬───────┐
+    #   # │ x   ┆ y    ┆ x/2  ┆ x/y   │
+    #   # │ --- ┆ ---  ┆ ---  ┆ ---   │
+    #   # │ i64 ┆ f64  ┆ f64  ┆ f64   │
+    #   # ╞═════╪══════╪══════╪═══════╡
+    #   # │ -2  ┆ 0.5  ┆ -1.0 ┆ -4.0  │
+    #   # │ -1  ┆ 0.0  ┆ -0.5 ┆ -inf  │
+    #   # │ 0   ┆ 0.0  ┆ 0.0  ┆ NaN   │
+    #   # │ 1   ┆ -4.0 ┆ 0.5  ┆ -0.25 │
+    #   # │ 2   ┆ -0.5 ┆ 1.0  ┆ -4.0  │
+    #   # └─────┴──────┴──────┴───────┘
+    def truediv(other)
+      self / other
     end
 
     # Raise expression to the power of exponent.
@@ -2811,23 +3659,53 @@ module Polars
     # @return [Expr]
     #
     # @example
-    #   df = Polars::DataFrame.new({"foo" => [1, 2, 3, 4]})
-    #   df.select(Polars.col("foo").pow(3))
+    #   df = Polars::DataFrame.new({"x" => [1, 2, 4, 8]})
+    #   df.with_columns(
+    #     Polars.col("x").pow(3).alias("cube"),
+    #     Polars.col("x").pow(Polars.col("x").log(2)).alias("x ** xlog2")
+    #   )
     #   # =>
-    #   # shape: (4, 1)
-    #   # ┌──────┐
-    #   # │ foo  │
-    #   # │ ---  │
-    #   # │ f64  │
-    #   # ╞══════╡
-    #   # │ 1.0  │
-    #   # │ 8.0  │
-    #   # │ 27.0 │
-    #   # │ 64.0 │
-    #   # └──────┘
+    #   # shape: (4, 3)
+    #   # ┌─────┬──────┬────────────┐
+    #   # │ x   ┆ cube ┆ x ** xlog2 │
+    #   # │ --- ┆ ---  ┆ ---        │
+    #   # │ i64 ┆ i64  ┆ f64        │
+    #   # ╞═════╪══════╪════════════╡
+    #   # │ 1   ┆ 1    ┆ 1.0        │
+    #   # │ 2   ┆ 8    ┆ 2.0        │
+    #   # │ 4   ┆ 64   ┆ 16.0       │
+    #   # │ 8   ┆ 512  ┆ 512.0      │
+    #   # └─────┴──────┴────────────┘
     def pow(exponent)
-      exponent = Utils.expr_to_lit_or_expr(exponent)
-      wrap_expr(_rbexpr.pow(exponent._rbexpr))
+      self**exponent
+    end
+
+    # Method equivalent of bitwise exclusive-or operator `expr ^ other`.
+    #
+    # @param other [Object]
+    #   Integer or boolean value; accepts expression input.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {"x" => [true, false, true, false], "y" => [true, true, false, false]}
+    #   )
+    #   df.with_columns(Polars.col("x").xor(Polars.col("y")).alias("x ^ y"))
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌───────┬───────┬───────┐
+    #   # │ x     ┆ y     ┆ x ^ y │
+    #   # │ ---   ┆ ---   ┆ ---   │
+    #   # │ bool  ┆ bool  ┆ bool  │
+    #   # ╞═══════╪═══════╪═══════╡
+    #   # │ true  ┆ true  ┆ false │
+    #   # │ false ┆ true  ┆ true  │
+    #   # │ true  ┆ false ┆ true  │
+    #   # │ false ┆ false ┆ false │
+    #   # └───────┴───────┴───────┘
+    def xor(other)
+      self ^ other
     end
 
     # Check if elements of this expression are present in the other Series.
@@ -2856,14 +3734,14 @@ module Polars
     def is_in(other)
       if other.is_a?(::Array)
         if other.length == 0
-          other = Polars.lit(nil)
+          other = Polars.lit(nil)._rbexpr
         else
-          other = Polars.lit(Series.new(other))
+          other = Polars.lit(Series.new(other))._rbexpr
         end
       else
-        other = Utils.expr_to_lit_or_expr(other, str_to_lit: false)
+        other = Utils.parse_into_expression(other, str_as_lit: false)
       end
-      wrap_expr(_rbexpr.is_in(other._rbexpr))
+      _from_rbexpr(_rbexpr.is_in(other))
     end
     alias_method :in?, :is_in
 
@@ -2898,15 +3776,15 @@ module Polars
     #   # │ ["z", "z", "z"] │
     #   # └─────────────────┘
     def repeat_by(by)
-      by = Utils.expr_to_lit_or_expr(by, str_to_lit: false)
-      wrap_expr(_rbexpr.repeat_by(by._rbexpr))
+      by = Utils.parse_into_expression(by, str_as_lit: false)
+      _from_rbexpr(_rbexpr.repeat_by(by))
     end
 
     # Check if this expression is between start and end.
     #
-    # @param start [Object]
+    # @param lower_bound [Object]
     #   Lower bound as primitive type or datetime.
-    # @param _end [Object]
+    # @param upper_bound [Object]
     #   Upper bound as primitive type or datetime.
     # @param closed ["both", "left", "right", "none"]
     #   Define which sides of the interval are closed (inclusive).
@@ -2968,22 +3846,13 @@ module Polars
     #   # │ d   ┆ false      │
     #   # │ e   ┆ false      │
     #   # └─────┴────────────┘
-    def is_between(start, _end, closed: "both")
-      start = Utils.expr_to_lit_or_expr(start, str_to_lit: false)
-      _end = Utils.expr_to_lit_or_expr(_end, str_to_lit: false)
+    def is_between(lower_bound, upper_bound, closed: "both")
+      lower_bound = Utils.parse_into_expression(lower_bound)
+      upper_bound = Utils.parse_into_expression(upper_bound)
 
-      case closed
-      when "none"
-        (self > start) & (self < _end)
-      when "both"
-        (self >= start) & (self <= _end)
-      when "right"
-        (self > start) & (self <= _end)
-      when "left"
-        (self >= start) & (self < _end)
-      else
-        raise ArgumentError, "closed must be one of 'left', 'right', 'both', or 'none'"
-      end
+      _from_rbexpr(
+        _rbexpr.is_between(lower_bound, upper_bound, closed)
+      )
     end
 
     # Hash the elements in the selection.
@@ -3025,7 +3894,7 @@ module Polars
       k1 = seed_1.nil? ? seed : seed_1
       k2 = seed_2.nil? ? seed : seed_2
       k3 = seed_3.nil? ? seed : seed_3
-      wrap_expr(_rbexpr._hash(k0, k1, k2, k3))
+      _from_rbexpr(_rbexpr._hash(k0, k1, k2, k3))
     end
 
     # Reinterpret the underlying bits as a signed/unsigned integer.
@@ -3059,7 +3928,7 @@ module Polars
     #   # │ 2             ┆ 2        │
     #   # └───────────────┴──────────┘
     def reinterpret(signed: false)
-      wrap_expr(_rbexpr.reinterpret(signed))
+      _from_rbexpr(_rbexpr.reinterpret(signed))
     end
 
     # Print the value that this expression evaluates to and pass on the value.
@@ -3122,7 +3991,1003 @@ module Polars
     #   # │ 3.0 ┆ 3.0 │
     #   # └─────┴─────┘
     def interpolate(method: "linear")
-      wrap_expr(_rbexpr.interpolate(method))
+      _from_rbexpr(_rbexpr.interpolate(method))
+    end
+
+    # Apply a rolling min based on another column.
+    #
+    # @param by [String]
+    #   This column must be of dtype Datetime or Date.
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #     {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling min with the temporal windows closed on the right (default)
+    #   df_temporal.with_columns(
+    #     rolling_row_min: Polars.col("index").rolling_min_by("date", "2h")
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_min │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ u32             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0               │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0               │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1               │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 2               │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 3               │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 19              │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 20              │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 21              │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 22              │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 23              │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    def rolling_min_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_min_by(by, window_size, min_periods, closed)
+      )
+    end
+
+    # Apply a rolling max based on another column.
+    #
+    # @param by [String]
+    #   This column must be of dtype Datetime or Date.
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #       {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling max with the temporal windows closed on the right (default)
+    #   df_temporal.with_columns(
+    #     rolling_row_max: Polars.col("index").rolling_max_by("date", "2h")
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_max │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ u32             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0               │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 1               │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 2               │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 3               │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 4               │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 20              │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 21              │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 22              │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 23              │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 24              │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    #
+    # @example Compute the rolling max with the closure of windows on both sides
+    #   df_temporal.with_columns(
+    #     rolling_row_max: Polars.col("index").rolling_max_by(
+    #       "date", "2h", closed: "both"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_max │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ u32             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0               │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 1               │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 2               │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 3               │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 4               │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 20              │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 21              │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 22              │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 23              │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 24              │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    def rolling_max_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_max_by(by, window_size, min_periods, closed)
+      )
+    end
+
+    # Apply a rolling mean based on another column.
+    #
+    # @param by [String]
+    #   This column must be of dtype Datetime or Date.
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #       {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling mean with the temporal windows closed on the right (default)
+    #   df_temporal.with_columns(
+    #     rolling_row_mean: Polars.col("index").rolling_mean_by(
+    #       "date", "2h"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬──────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_mean │
+    #   # │ ---   ┆ ---                 ┆ ---              │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64              │
+    #   # ╞═══════╪═════════════════════╪══════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0.0              │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.5              │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1.5              │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 2.5              │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 3.5              │
+    #   # │ …     ┆ …                   ┆ …                │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 19.5             │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 20.5             │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 21.5             │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 22.5             │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 23.5             │
+    #   # └───────┴─────────────────────┴──────────────────┘
+    #
+    # @example Compute the rolling mean with the closure of windows on both sides
+    #   df_temporal.with_columns(
+    #     rolling_row_mean: Polars.col("index").rolling_mean_by(
+    #       "date", "2h", closed: "both"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬──────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_mean │
+    #   # │ ---   ┆ ---                 ┆ ---              │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64              │
+    #   # ╞═══════╪═════════════════════╪══════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0.0              │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.5              │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1.0              │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 2.0              │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 3.0              │
+    #   # │ …     ┆ …                   ┆ …                │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 19.0             │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 20.0             │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 21.0             │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 22.0             │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 23.0             │
+    #   # └───────┴─────────────────────┴──────────────────┘
+    def rolling_mean_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_mean_by(
+          by,
+          window_size,
+          min_periods,
+          closed
+        )
+      )
+    end
+
+    # Apply a rolling sum based on another column.
+    #
+    # @param by [String]
+    #   This column must of dtype `{Date, Datetime}`
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #       {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling sum with the temporal windows closed on the right (default)
+    #   df_temporal.with_columns(
+    #     rolling_row_sum: Polars.col("index").rolling_sum_by("date", "2h")
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_sum │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ u32             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0               │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 1               │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 3               │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 5               │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 7               │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 39              │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 41              │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 43              │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 45              │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 47              │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    #
+    # @example Compute the rolling sum with the closure of windows on both sides
+    #   df_temporal.with_columns(
+    #     rolling_row_sum: Polars.col("index").rolling_sum_by(
+    #       "date", "2h", closed: "both"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_sum │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ u32             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0               │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 1               │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 3               │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 6               │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 9               │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 57              │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 60              │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 63              │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 66              │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 69              │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    def rolling_sum_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_sum_by(by, window_size, min_periods, closed)
+      )
+    end
+
+    # Compute a rolling standard deviation based on another column.
+    #
+    # @param by [String]
+    #   This column must be of dtype Datetime or Date.
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param ddof [Integer]
+    #   "Delta Degrees of Freedom": The divisor for a length N window is N - ddof
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #       {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling std with the temporal windows closed on the right (default)
+    #   df_temporal.with_columns(
+    #     rolling_row_std: Polars.col("index").rolling_std_by("date", "2h")
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_std │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ null            │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.707107        │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 0.707107        │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 0.707107        │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 0.707107        │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 0.707107        │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 0.707107        │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 0.707107        │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 0.707107        │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 0.707107        │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    #
+    # @example Compute the rolling std with the closure of windows on both sides
+    #   df_temporal.with_columns(
+    #     rolling_row_std: Polars.col("index").rolling_std_by(
+    #       "date", "2h", closed: "both"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_std │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ null            │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.707107        │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1.0             │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 1.0             │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 1.0             │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 1.0             │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 1.0             │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 1.0             │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 1.0             │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 1.0             │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    def rolling_std_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      ddof: 1,
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_std_by(
+          by,
+          window_size,
+          min_periods,
+          closed,
+          ddof
+        )
+      )
+    end
+
+    # Compute a rolling variance based on another column.
+    #
+    # @param by [String]
+    #   This column must be of dtype Datetime or Date.
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param ddof [Integer]
+    #   "Delta Degrees of Freedom": The divisor for a length N window is N - ddof
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #       {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling var with the temporal windows closed on the right (default)
+    #   df_temporal.with_columns(
+    #     rolling_row_var: Polars.col("index").rolling_var_by("date", "2h")
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_var │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ null            │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.5             │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 0.5             │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 0.5             │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 0.5             │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 0.5             │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 0.5             │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 0.5             │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 0.5             │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 0.5             │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    #
+    # @example Compute the rolling var with the closure of windows on both sides
+    #   df_temporal.with_columns(
+    #     rolling_row_var: Polars.col("index").rolling_var_by(
+    #       "date", "2h", closed: "both"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬─────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_var │
+    #   # │ ---   ┆ ---                 ┆ ---             │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64             │
+    #   # ╞═══════╪═════════════════════╪═════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ null            │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.5             │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1.0             │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 1.0             │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 1.0             │
+    #   # │ …     ┆ …                   ┆ …               │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 1.0             │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 1.0             │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 1.0             │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 1.0             │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 1.0             │
+    #   # └───────┴─────────────────────┴─────────────────┘
+    def rolling_var_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      ddof: 1,
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_var_by(
+          by,
+          window_size,
+          min_periods,
+          closed,
+          ddof
+        )
+      )
+    end
+
+    # Compute a rolling median based on another column.
+    #
+    # @param by [String]
+    #     This column must be of dtype Datetime or Date.
+    # @param window_size [String]
+    #   The length of the window. Can be a dynamic temporal
+    #   size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #     {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling median with the temporal windows closed on the right:
+    #   df_temporal.with_columns(
+    #     rolling_row_median: Polars.col("index").rolling_median_by(
+    #       "date", "2h"
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬────────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_median │
+    #   # │ ---   ┆ ---                 ┆ ---                │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64                │
+    #   # ╞═══════╪═════════════════════╪════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0.0                │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.5                │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1.5                │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 2.5                │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 3.5                │
+    #   # │ …     ┆ …                   ┆ …                  │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 19.5               │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 20.5               │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 21.5               │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 22.5               │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 23.5               │
+    #   # └───────┴─────────────────────┴────────────────────┘
+    def rolling_median_by(
+      by,
+      window_size,
+      min_periods: 1,
+      closed: "right",
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_median_by(by, window_size, min_periods, closed)
+      )
+    end
+
+    # Compute a rolling quantile based on another column.
+    #
+    # @param by [String]
+    #   This column must be of dtype Datetime or Date.
+    # @param quantile [Float]
+    #   Quantile between 0.0 and 1.0.
+    # @param interpolation ['nearest', 'higher', 'lower', 'midpoint', 'linear']
+    #   Interpolation method.
+    # @param window_size  [String]
+    #   The length of the window. Can be a dynamic
+    #   temporal size indicated by a timedelta or the following string language:
+    #
+    #   - 1ns   (1 nanosecond)
+    #   - 1us   (1 microsecond)
+    #   - 1ms   (1 millisecond)
+    #   - 1s    (1 second)
+    #   - 1m    (1 minute)
+    #   - 1h    (1 hour)
+    #   - 1d    (1 calendar day)
+    #   - 1w    (1 calendar week)
+    #   - 1mo   (1 calendar month)
+    #   - 1q    (1 calendar quarter)
+    #   - 1y    (1 calendar year)
+    #
+    #   By "calendar day", we mean the corresponding time on the next day
+    #   (which may not be 24 hours, due to daylight savings). Similarly for
+    #   "calendar week", "calendar month", "calendar quarter", and
+    #   "calendar year".
+    # @param min_periods [Integer]
+    #   The number of values in the window that should be non-null before computing
+    #   a result.
+    # @param closed ['left', 'right', 'both', 'none']
+    #   Define which sides of the temporal interval are closed (inclusive),
+    #   defaults to `'right'`.
+    # @param warn_if_unsorted [Boolean]
+    #   Warn if data is not known to be sorted by `by` column.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   If you want to compute multiple aggregation statistics over the same dynamic
+    #   window, consider using `rolling` - this method can cache the window size
+    #   computation.
+    #
+    # @example Create a DataFrame with a datetime column and a row number column
+    #   start = DateTime.new(2001, 1, 1)
+    #   stop = DateTime.new(2001, 1, 2)
+    #   df_temporal = Polars::DataFrame.new(
+    #       {"date" => Polars.datetime_range(start, stop, "1h", eager: true)}
+    #   ).with_row_index
+    #   # =>
+    #   # shape: (25, 2)
+    #   # ┌───────┬─────────────────────┐
+    #   # │ index ┆ date                │
+    #   # │ ---   ┆ ---                 │
+    #   # │ u32   ┆ datetime[ns]        │
+    #   # ╞═══════╪═════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 │
+    #   # │ …     ┆ …                   │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 │
+    #   # └───────┴─────────────────────┘
+    #
+    # @example Compute the rolling quantile with the temporal windows closed on the right:
+    #   df_temporal.with_columns(
+    #     rolling_row_quantile: Polars.col("index").rolling_quantile_by(
+    #       "date", "2h", quantile: 0.3
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (25, 3)
+    #   # ┌───────┬─────────────────────┬──────────────────────┐
+    #   # │ index ┆ date                ┆ rolling_row_quantile │
+    #   # │ ---   ┆ ---                 ┆ ---                  │
+    #   # │ u32   ┆ datetime[ns]        ┆ f64                  │
+    #   # ╞═══════╪═════════════════════╪══════════════════════╡
+    #   # │ 0     ┆ 2001-01-01 00:00:00 ┆ 0.0                  │
+    #   # │ 1     ┆ 2001-01-01 01:00:00 ┆ 0.0                  │
+    #   # │ 2     ┆ 2001-01-01 02:00:00 ┆ 1.0                  │
+    #   # │ 3     ┆ 2001-01-01 03:00:00 ┆ 2.0                  │
+    #   # │ 4     ┆ 2001-01-01 04:00:00 ┆ 3.0                  │
+    #   # │ …     ┆ …                   ┆ …                    │
+    #   # │ 20    ┆ 2001-01-01 20:00:00 ┆ 19.0                 │
+    #   # │ 21    ┆ 2001-01-01 21:00:00 ┆ 20.0                 │
+    #   # │ 22    ┆ 2001-01-01 22:00:00 ┆ 21.0                 │
+    #   # │ 23    ┆ 2001-01-01 23:00:00 ┆ 22.0                 │
+    #   # │ 24    ┆ 2001-01-02 00:00:00 ┆ 23.0                 │
+    #   # └───────┴─────────────────────┴──────────────────────┘
+    def rolling_quantile_by(
+      by,
+      window_size,
+      quantile:,
+      interpolation: "nearest",
+      min_periods: 1,
+      closed: "right",
+      warn_if_unsorted: nil
+    )
+      window_size = _prepare_rolling_by_window_args(window_size)
+      by = Utils.parse_into_expression(by)
+      _from_rbexpr(
+        _rbexpr.rolling_quantile_by(
+          by,
+          quantile,
+          interpolation,
+          window_size,
+          min_periods,
+          closed,
+        )
+      )
     end
 
     # Apply a rolling min (moving min) over the values in this array.
@@ -3157,12 +5022,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3200,16 +5059,11 @@ module Polars
       window_size,
       weights: nil,
       min_periods: nil,
-      center: false,
-      by: nil,
-      closed: "left"
+      center: false
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_min(
-          window_size, weights, min_periods, center, by, closed
+          window_size, weights, min_periods, center
         )
       )
     end
@@ -3246,12 +5100,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3289,16 +5137,11 @@ module Polars
       window_size,
       weights: nil,
       min_periods: nil,
-      center: false,
-      by: nil,
-      closed: "left"
+      center: false
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_max(
-          window_size, weights, min_periods, center, by, closed
+          window_size, weights, min_periods, center
         )
       )
     end
@@ -3335,12 +5178,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3378,16 +5215,11 @@ module Polars
       window_size,
       weights: nil,
       min_periods: nil,
-      center: false,
-      by: nil,
-      closed: "left"
+      center: false
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_mean(
-          window_size, weights, min_periods, center, by, closed
+          window_size, weights, min_periods, center
         )
       )
     end
@@ -3424,12 +5256,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3467,16 +5293,11 @@ module Polars
       window_size,
       weights: nil,
       min_periods: nil,
-      center: false,
-      by: nil,
-      closed: "left"
+      center: false
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_sum(
-          window_size, weights, min_periods, center, by, closed
+          window_size, weights, min_periods, center
         )
       )
     end
@@ -3513,12 +5334,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3557,16 +5372,11 @@ module Polars
       weights: nil,
       min_periods: nil,
       center: false,
-      by: nil,
-      closed: "left",
       ddof: 1
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_std(
-          window_size, weights, min_periods, center, by, closed, ddof
+          window_size, weights, min_periods, center, ddof
         )
       )
     end
@@ -3603,12 +5413,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3647,16 +5451,11 @@ module Polars
       weights: nil,
       min_periods: nil,
       center: false,
-      by: nil,
-      closed: "left",
       ddof: 1
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_var(
-          window_size, weights, min_periods, center, by, closed, ddof
+          window_size, weights, min_periods, center, ddof
         )
       )
     end
@@ -3689,12 +5488,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3732,16 +5525,11 @@ module Polars
       window_size,
       weights: nil,
       min_periods: nil,
-      center: false,
-      by: nil,
-      closed: "left"
+      center: false
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_median(
-          window_size, weights, min_periods, center, by, closed
+          window_size, weights, min_periods, center
         )
       )
     end
@@ -3778,12 +5566,6 @@ module Polars
     #   a result. If None, it will be set equal to window size.
     # @param center [Boolean]
     #   Set the labels at the center of the window
-    # @param by [String]
-    #   If the `window_size` is temporal for instance `"5h"` or `"3s`, you must
-    #   set the column that will be used to determine the windows. This column must
-    #   be of dtype `{Date, Datetime}`
-    # @param closed ["left", "right", "both", "none"]
-    #   Define whether the temporal window interval is closed or not.
     #
     # @note
     #   This functionality is experimental and may change without it being considered a
@@ -3823,16 +5605,11 @@ module Polars
       window_size: 2,
       weights: nil,
       min_periods: nil,
-      center: false,
-      by: nil,
-      closed: "left"
+      center: false
     )
-      window_size, min_periods = _prepare_rolling_window_args(
-        window_size, min_periods
-      )
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.rolling_quantile(
-          quantile, interpolation, window_size, weights, min_periods, center, by, closed
+          quantile, interpolation, window_size, weights, min_periods, center
         )
       )
     end
@@ -3894,7 +5671,7 @@ module Polars
     #   if min_periods.nil?
     #     min_periods = window_size
     #   end
-    #   wrap_expr(
+    #   _from_rbexpr(
     #     _rbexpr.rolling_apply(
     #       function, window_size, weights, min_periods, center
     #     )
@@ -3909,8 +5686,24 @@ module Polars
     #   If false, the calculations are corrected for statistical bias.
     #
     # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a" => [1, 4, 2, 9]})
+    #   df.select(Polars.col("a").rolling_skew(3))
+    #   # =>
+    #   # shape: (4, 1)
+    #   # ┌──────────┐
+    #   # │ a        │
+    #   # │ ---      │
+    #   # │ f64      │
+    #   # ╞══════════╡
+    #   # │ null     │
+    #   # │ null     │
+    #   # │ 0.381802 │
+    #   # │ 0.47033  │
+    #   # └──────────┘
     def rolling_skew(window_size, bias: true)
-      wrap_expr(_rbexpr.rolling_skew(window_size, bias))
+      _from_rbexpr(_rbexpr.rolling_skew(window_size, bias))
     end
 
     # Compute absolute values.
@@ -3937,7 +5730,7 @@ module Polars
     #   # │ 2.0 │
     #   # └─────┘
     def abs
-      wrap_expr(_rbexpr.abs)
+      _from_rbexpr(_rbexpr.abs)
     end
 
     # Get the index values that would sort this column.
@@ -3995,6 +5788,8 @@ module Polars
     #     on the order that the values occur in the Series.
     # @param reverse [Boolean]
     #   Reverse the operation.
+    # @param seed [Integer]
+    #   If `method: "random"`, use this as seed.
     #
     # @return [Expr]
     #
@@ -4032,7 +5827,7 @@ module Polars
     #   # │ 5   │
     #   # └─────┘
     def rank(method: "average", reverse: false, seed: nil)
-      wrap_expr(_rbexpr.rank(method, reverse, seed))
+      _from_rbexpr(_rbexpr.rank(method, reverse, seed))
     end
 
     # Calculate the n-th discrete difference.
@@ -4063,7 +5858,7 @@ module Polars
     #   # │ 20   │
     #   # └──────┘
     def diff(n: 1, null_behavior: "ignore")
-      wrap_expr(_rbexpr.diff(n, null_behavior))
+      _from_rbexpr(_rbexpr.diff(n, null_behavior))
     end
 
     # Computes percentage change between values.
@@ -4099,8 +5894,8 @@ module Polars
     #   # │ 12   ┆ 0.0        │
     #   # └──────┴────────────┘
     def pct_change(n: 1)
-      n = Utils.parse_as_expression(n)
-      wrap_expr(_rbexpr.pct_change(n))
+      n = Utils.parse_into_expression(n)
+      _from_rbexpr(_rbexpr.pct_change(n))
     end
 
     # Compute the sample skewness of a data set.
@@ -4129,7 +5924,7 @@ module Polars
     #   # │ 0.343622 │
     #   # └──────────┘
     def skew(bias: true)
-      wrap_expr(_rbexpr.skew(bias))
+      _from_rbexpr(_rbexpr.skew(bias))
     end
 
     # Compute the kurtosis (Fisher or Pearson) of a dataset.
@@ -4161,7 +5956,7 @@ module Polars
     #   # │ -1.153061 │
     #   # └───────────┘
     def kurtosis(fisher: true, bias: true)
-      wrap_expr(_rbexpr.kurtosis(fisher, bias))
+      _from_rbexpr(_rbexpr.kurtosis(fisher, bias))
     end
 
     # Set values outside the given boundaries to the boundary value.
@@ -4191,14 +5986,14 @@ module Polars
     #   # │ null ┆ null        │
     #   # │ 50   ┆ 10          │
     #   # └──────┴─────────────┘
-    def clip(lower_bound, upper_bound)
+    def clip(lower_bound = nil, upper_bound = nil)
       if !lower_bound.nil?
-        lower_bound = Utils.parse_as_expression(lower_bound, str_as_lit: true)
+        lower_bound = Utils.parse_into_expression(lower_bound)
       end
       if !upper_bound.nil?
-        upper_bound = Utils.parse_as_expression(upper_bound, str_as_lit: true)
+        upper_bound = Utils.parse_into_expression(upper_bound)
       end
-      wrap_expr(_rbexpr.clip(lower_bound, upper_bound))
+      _from_rbexpr(_rbexpr.clip(lower_bound, upper_bound))
     end
 
     # Clip (limit) the values in an array to a `min` boundary.
@@ -4283,7 +6078,7 @@ module Polars
     #   # │ -9223372036854775808 │
     #   # └──────────────────────┘
     def lower_bound
-      wrap_expr(_rbexpr.lower_bound)
+      _from_rbexpr(_rbexpr.lower_bound)
     end
 
     # Calculate the upper bound.
@@ -4306,7 +6101,7 @@ module Polars
     #   # │ 9223372036854775807 │
     #   # └─────────────────────┘
     def upper_bound
-      wrap_expr(_rbexpr.upper_bound)
+      _from_rbexpr(_rbexpr.upper_bound)
     end
 
     # Compute the element-wise indication of the sign.
@@ -4321,16 +6116,16 @@ module Polars
     #   # ┌──────┐
     #   # │ a    │
     #   # │ ---  │
-    #   # │ i64  │
+    #   # │ f64  │
     #   # ╞══════╡
-    #   # │ -1   │
-    #   # │ 0    │
-    #   # │ 0    │
-    #   # │ 1    │
+    #   # │ -1.0 │
+    #   # │ -0.0 │
+    #   # │ 0.0  │
+    #   # │ 1.0  │
     #   # │ null │
     #   # └──────┘
     def sign
-      wrap_expr(_rbexpr.sign)
+      _from_rbexpr(_rbexpr.sign)
     end
 
     # Compute the element-wise value for the sine.
@@ -4350,7 +6145,7 @@ module Polars
     #   # │ 0.0 │
     #   # └─────┘
     def sin
-      wrap_expr(_rbexpr.sin)
+      _from_rbexpr(_rbexpr.sin)
     end
 
     # Compute the element-wise value for the cosine.
@@ -4370,7 +6165,7 @@ module Polars
     #   # │ 1.0 │
     #   # └─────┘
     def cos
-      wrap_expr(_rbexpr.cos)
+      _from_rbexpr(_rbexpr.cos)
     end
 
     # Compute the element-wise value for the tangent.
@@ -4390,7 +6185,7 @@ module Polars
     #   # │ 1.557408 │
     #   # └──────────┘
     def tan
-      wrap_expr(_rbexpr.tan)
+      _from_rbexpr(_rbexpr.tan)
     end
 
     # Compute the element-wise value for the inverse sine.
@@ -4410,7 +6205,7 @@ module Polars
     #   # │ 1.570796 │
     #   # └──────────┘
     def arcsin
-      wrap_expr(_rbexpr.arcsin)
+      _from_rbexpr(_rbexpr.arcsin)
     end
 
     # Compute the element-wise value for the inverse cosine.
@@ -4430,7 +6225,7 @@ module Polars
     #   # │ 1.570796 │
     #   # └──────────┘
     def arccos
-      wrap_expr(_rbexpr.arccos)
+      _from_rbexpr(_rbexpr.arccos)
     end
 
     # Compute the element-wise value for the inverse tangent.
@@ -4450,7 +6245,7 @@ module Polars
     #   # │ 0.785398 │
     #   # └──────────┘
     def arctan
-      wrap_expr(_rbexpr.arctan)
+      _from_rbexpr(_rbexpr.arctan)
     end
 
     # Compute the element-wise value for the hyperbolic sine.
@@ -4470,7 +6265,7 @@ module Polars
     #   # │ 1.175201 │
     #   # └──────────┘
     def sinh
-      wrap_expr(_rbexpr.sinh)
+      _from_rbexpr(_rbexpr.sinh)
     end
 
     # Compute the element-wise value for the hyperbolic cosine.
@@ -4490,7 +6285,7 @@ module Polars
     #   # │ 1.543081 │
     #   # └──────────┘
     def cosh
-      wrap_expr(_rbexpr.cosh)
+      _from_rbexpr(_rbexpr.cosh)
     end
 
     # Compute the element-wise value for the hyperbolic tangent.
@@ -4510,7 +6305,7 @@ module Polars
     #   # │ 0.761594 │
     #   # └──────────┘
     def tanh
-      wrap_expr(_rbexpr.tanh)
+      _from_rbexpr(_rbexpr.tanh)
     end
 
     # Compute the element-wise value for the inverse hyperbolic sine.
@@ -4530,7 +6325,7 @@ module Polars
     #   # │ 0.881374 │
     #   # └──────────┘
     def arcsinh
-      wrap_expr(_rbexpr.arcsinh)
+      _from_rbexpr(_rbexpr.arcsinh)
     end
 
     # Compute the element-wise value for the inverse hyperbolic cosine.
@@ -4550,7 +6345,7 @@ module Polars
     #   # │ 0.0 │
     #   # └─────┘
     def arccosh
-      wrap_expr(_rbexpr.arccosh)
+      _from_rbexpr(_rbexpr.arccosh)
     end
 
     # Compute the element-wise value for the inverse hyperbolic tangent.
@@ -4570,7 +6365,7 @@ module Polars
     #   # │ inf │
     #   # └─────┘
     def arctanh
-      wrap_expr(_rbexpr.arctanh)
+      _from_rbexpr(_rbexpr.arctanh)
     end
 
     # Reshape this Expr to a flat Series or a Series of Lists.
@@ -4583,20 +6378,40 @@ module Polars
     #
     # @example
     #   df = Polars::DataFrame.new({"foo" => [1, 2, 3, 4, 5, 6, 7, 8, 9]})
-    #   df.select(Polars.col("foo").reshape([3, 3]))
+    #   square = df.select(Polars.col("foo").reshape([3, 3]))
     #   # =>
     #   # shape: (3, 1)
-    #   # ┌───────────┐
-    #   # │ foo       │
-    #   # │ ---       │
-    #   # │ list[i64] │
-    #   # ╞═══════════╡
-    #   # │ [1, 2, 3] │
-    #   # │ [4, 5, 6] │
-    #   # │ [7, 8, 9] │
-    #   # └───────────┘
+    #   # ┌───────────────┐
+    #   # │ foo           │
+    #   # │ ---           │
+    #   # │ array[i64, 3] │
+    #   # ╞═══════════════╡
+    #   # │ [1, 2, 3]     │
+    #   # │ [4, 5, 6]     │
+    #   # │ [7, 8, 9]     │
+    #   # └───────────────┘
+    #
+    # @example
+    #   square.select(Polars.col("foo").reshape([9]))
+    #   # =>
+    #   # shape: (9, 1)
+    #   # ┌─────┐
+    #   # │ foo │
+    #   # │ --- │
+    #   # │ i64 │
+    #   # ╞═════╡
+    #   # │ 1   │
+    #   # │ 2   │
+    #   # │ 3   │
+    #   # │ 4   │
+    #   # │ 5   │
+    #   # │ 6   │
+    #   # │ 7   │
+    #   # │ 8   │
+    #   # │ 9   │
+    #   # └─────┘
     def reshape(dims)
-      wrap_expr(_rbexpr.reshape(dims))
+      _from_rbexpr(_rbexpr.reshape(dims))
     end
 
     # Shuffle the contents of this expr.
@@ -4625,7 +6440,7 @@ module Polars
       if seed.nil?
         seed = rand(10000)
       end
-      wrap_expr(_rbexpr.shuffle(seed))
+      _from_rbexpr(_rbexpr.shuffle(seed))
     end
 
     # Sample from this expression.
@@ -4670,15 +6485,15 @@ module Polars
       end
 
       if !n.nil? && frac.nil?
-        n = Utils.parse_as_expression(n)
-        return wrap_expr(_rbexpr.sample_n(n, with_replacement, shuffle, seed))
+        n = Utils.parse_into_expression(n)
+        return _from_rbexpr(_rbexpr.sample_n(n, with_replacement, shuffle, seed))
       end
 
       if frac.nil?
         frac = 1.0
       end
-      frac = Utils.parse_as_expression(frac)
-      wrap_expr(
+      frac = Utils.parse_into_expression(frac)
+      _from_rbexpr(
         _rbexpr.sample_frac(frac, with_replacement, shuffle, seed)
       )
     end
@@ -4711,7 +6526,7 @@ module Polars
       ignore_nulls: true
     )
       alpha = _prepare_alpha(com, span, half_life, alpha)
-      wrap_expr(_rbexpr.ewm_mean(alpha, adjust, min_periods, ignore_nulls))
+      _from_rbexpr(_rbexpr.ewm_mean(alpha, adjust, min_periods, ignore_nulls))
     end
 
     # Exponentially-weighted moving standard deviation.
@@ -4743,7 +6558,7 @@ module Polars
       ignore_nulls: true
     )
       alpha = _prepare_alpha(com, span, half_life, alpha)
-      wrap_expr(_rbexpr.ewm_std(alpha, adjust, bias, min_periods, ignore_nulls))
+      _from_rbexpr(_rbexpr.ewm_std(alpha, adjust, bias, min_periods, ignore_nulls))
     end
 
     # Exponentially-weighted moving variance.
@@ -4775,7 +6590,7 @@ module Polars
       ignore_nulls: true
     )
       alpha = _prepare_alpha(com, span, half_life, alpha)
-      wrap_expr(_rbexpr.ewm_var(alpha, adjust, bias, min_periods, ignore_nulls))
+      _from_rbexpr(_rbexpr.ewm_var(alpha, adjust, bias, min_periods, ignore_nulls))
     end
 
     # Extend the Series with given number of values.
@@ -4805,16 +6620,22 @@ module Polars
     #   # │ 99     │
     #   # └────────┘
     def extend_constant(value, n)
-      wrap_expr(_rbexpr.extend_constant(value, n))
+      _from_rbexpr(_rbexpr.extend_constant(value, n))
     end
 
     # Count all unique values and create a struct mapping value to count.
     #
-    # @param multithreaded [Boolean]
-    #   Better to turn this off in the aggregation context, as it can lead to
-    #   contention.
     # @param sort [Boolean]
-    #   Ensure the output is sorted from most values to least.
+    #   Sort the output by count in descending order.
+    #   If set to `false` (default), the order of the output is random.
+    # @param parallel [Boolean]
+    #   Execute the computation in parallel.
+    # @param name [String]
+    #   Give the resulting count column a specific name;
+    #   if `normalize` is true defaults to "count",
+    #   otherwise defaults to "proportion".
+    # @param normalize [Boolean]
+    #   If true gives relative frequencies of the unique values
     #
     # @return [Expr]
     #
@@ -4840,8 +6661,22 @@ module Polars
     #   # │ {"b",2}   │
     #   # │ {"a",1}   │
     #   # └───────────┘
-    def value_counts(multithreaded: false, sort: false)
-      wrap_expr(_rbexpr.value_counts(multithreaded, sort))
+    def value_counts(
+      sort: false,
+      parallel: false,
+      name: nil,
+      normalize: false
+    )
+      if name.nil?
+        if normalize
+          name = "proportion"
+        else
+          name = "count"
+        end
+      end
+      _from_rbexpr(
+        _rbexpr.value_counts(sort, parallel, name, normalize)
+      )
     end
 
     # Return a count of the unique values in the order of appearance.
@@ -4874,7 +6709,7 @@ module Polars
     #   # │ 3   │
     #   # └─────┘
     def unique_counts
-      wrap_expr(_rbexpr.unique_counts)
+      _from_rbexpr(_rbexpr.unique_counts)
     end
 
     # Compute the logarithm to a given base.
@@ -4899,7 +6734,7 @@ module Polars
     #   # │ 1.584963 │
     #   # └──────────┘
     def log(base = Math::E)
-      wrap_expr(_rbexpr.log(base))
+      _from_rbexpr(_rbexpr.log(base))
     end
 
     # Computes the entropy.
@@ -4938,7 +6773,7 @@ module Polars
     #   # │ -6.754888 │
     #   # └───────────┘
     def entropy(base: 2, normalize: true)
-      wrap_expr(_rbexpr.entropy(base, normalize))
+      _from_rbexpr(_rbexpr.entropy(base, normalize))
     end
 
     # Run an expression over a sliding window that increases `1` slot every iteration.
@@ -4976,16 +6811,16 @@ module Polars
     #   # ┌────────┐
     #   # │ values │
     #   # │ ---    │
-    #   # │ f64    │
+    #   # │ i64    │
     #   # ╞════════╡
-    #   # │ 0.0    │
-    #   # │ -3.0   │
-    #   # │ -8.0   │
-    #   # │ -15.0  │
-    #   # │ -24.0  │
+    #   # │ 0      │
+    #   # │ -3     │
+    #   # │ -8     │
+    #   # │ -15    │
+    #   # │ -24    │
     #   # └────────┘
     def cumulative_eval(expr, min_periods: 1, parallel: false)
-      wrap_expr(
+      _from_rbexpr(
         _rbexpr.cumulative_eval(expr._rbexpr, min_periods, parallel)
       )
     end
@@ -5016,7 +6851,7 @@ module Polars
     #   # │ 3      │
     #   # └────────┘
     def set_sorted(descending: false)
-      wrap_expr(_rbexpr.set_sorted_flag(descending))
+      _from_rbexpr(_rbexpr.set_sorted_flag(descending))
     end
 
     # Aggregate to list.
@@ -5041,7 +6876,7 @@ module Polars
     #   # │ [1, 2, 3] ┆ [4, 5, 6] │
     #   # └───────────┴───────────┘
     def implode
-      wrap_expr(_rbexpr.implode)
+      _from_rbexpr(_rbexpr.implode)
     end
 
     # Shrink numeric columns to the minimal required datatype.
@@ -5076,7 +6911,320 @@ module Polars
     #   # │ 3   ┆ 8589934592 ┆ 1073741824 ┆ 112  ┆ 129  ┆ c   ┆ 0.12 ┆ false │
     #   # └─────┴────────────┴────────────┴──────┴──────┴─────┴──────┴───────┘
     def shrink_dtype
-      wrap_expr(_rbexpr.shrink_dtype)
+      _from_rbexpr(_rbexpr.shrink_dtype)
+    end
+
+    # Replace values by different values.
+    #
+    # @param old [Object]
+    #   Value or sequence of values to replace.
+    #   Accepts expression input. Sequences are parsed as Series,
+    #   other non-expression inputs are parsed as literals.
+    #   Also accepts a mapping of values to their replacement.
+    # @param new [Object]
+    #   Value or sequence of values to replace by.
+    #   Accepts expression input. Sequences are parsed as Series,
+    #   other non-expression inputs are parsed as literals.
+    #   Length must match the length of `old` or have length 1.
+    # @param default [Object]
+    #   Set values that were not replaced to this value.
+    #   Defaults to keeping the original value.
+    #   Accepts expression input. Non-expression inputs are parsed as literals.
+    # @param return_dtype [Object]
+    #   The data type of the resulting expression. If set to `nil` (default),
+    #   the data type is determined automatically based on the other inputs.
+    #
+    # @return [Expr]
+    #
+    # @example Replace a single value by another value. Values that were not replaced remain unchanged.
+    #   df = Polars::DataFrame.new({"a" => [1, 2, 2, 3]})
+    #   df.with_columns(replaced: Polars.col("a").replace(2, 100))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ i64 ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ 1   ┆ 1        │
+    #   # │ 2   ┆ 100      │
+    #   # │ 2   ┆ 100      │
+    #   # │ 3   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example Replace multiple values by passing sequences to the `old` and `new` parameters.
+    #   df.with_columns(replaced: Polars.col("a").replace([2, 3], [100, 200]))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ i64 ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ 1   ┆ 1        │
+    #   # │ 2   ┆ 100      │
+    #   # │ 2   ┆ 100      │
+    #   # │ 3   ┆ 200      │
+    #   # └─────┴──────────┘
+    #
+    # @example Passing a mapping with replacements is also supported as syntactic sugar. Specify a default to set all values that were not matched.
+    #   mapping = {2 => 100, 3 => 200}
+    #   df.with_columns(replaced: Polars.col("a").replace(mapping, default: -1))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ i64 ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ 1   ┆ -1       │
+    #   # │ 2   ┆ 100      │
+    #   # │ 2   ┆ 100      │
+    #   # │ 3   ┆ 200      │
+    #   # └─────┴──────────┘
+    #
+    # @example Replacing by values of a different data type sets the return type based on a combination of the `new` data type and either the original data type or the default data type if it was set.
+    #   df = Polars::DataFrame.new({"a" => ["x", "y", "z"]})
+    #   mapping = {"x" => 1, "y" => 2, "z" => 3}
+    #   df.with_columns(replaced: Polars.col("a").replace(mapping))
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ str ┆ str      │
+    #   # ╞═════╪══════════╡
+    #   # │ x   ┆ 1        │
+    #   # │ y   ┆ 2        │
+    #   # │ z   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example
+    #   df.with_columns(replaced: Polars.col("a").replace(mapping, default: nil))
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ str ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ x   ┆ 1        │
+    #   # │ y   ┆ 2        │
+    #   # │ z   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example Set the `return_dtype` parameter to control the resulting data type directly.
+    #   df.with_columns(
+    #     replaced: Polars.col("a").replace(mapping, return_dtype: Polars::UInt8)
+    #   )
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ str ┆ u8       │
+    #   # ╞═════╪══════════╡
+    #   # │ x   ┆ 1        │
+    #   # │ y   ┆ 2        │
+    #   # │ z   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example Expression input is supported for all parameters.
+    #   df = Polars::DataFrame.new({"a" => [1, 2, 2, 3], "b" => [1.5, 2.5, 5.0, 1.0]})
+    #   df.with_columns(
+    #     replaced: Polars.col("a").replace(
+    #       Polars.col("a").max,
+    #       Polars.col("b").sum,
+    #       default: Polars.col("b")
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬──────────┐
+    #   # │ a   ┆ b   ┆ replaced │
+    #   # │ --- ┆ --- ┆ ---      │
+    #   # │ i64 ┆ f64 ┆ f64      │
+    #   # ╞═════╪═════╪══════════╡
+    #   # │ 1   ┆ 1.5 ┆ 1.5      │
+    #   # │ 2   ┆ 2.5 ┆ 2.5      │
+    #   # │ 2   ┆ 5.0 ┆ 5.0      │
+    #   # │ 3   ┆ 1.0 ┆ 10.0     │
+    #   # └─────┴─────┴──────────┘
+    def replace(old, new = NO_DEFAULT, default: NO_DEFAULT, return_dtype: nil)
+      if !default.eql?(NO_DEFAULT)
+        return replace_strict(old, new, default: default, return_dtype: return_dtype)
+      end
+
+      if new.eql?(NO_DEFAULT) && old.is_a?(Hash)
+        new = Series.new(old.values)
+        old = Series.new(old.keys)
+      else
+        if old.is_a?(::Array)
+          old = Series.new(old)
+        end
+        if new.is_a?(::Array)
+          new = Series.new(new)
+        end
+      end
+
+      old = Utils.parse_into_expression(old, str_as_lit: true)
+      new = Utils.parse_into_expression(new, str_as_lit: true)
+
+      result = _from_rbexpr(_rbexpr.replace(old, new))
+
+      if !return_dtype.nil?
+        result = result.cast(return_dtype)
+      end
+
+      result
+    end
+
+    # Replace all values by different values.
+    #
+    # @param old [Object]
+    #   Value or sequence of values to replace.
+    #   Accepts expression input. Sequences are parsed as Series,
+    #   other non-expression inputs are parsed as literals.
+    #   Also accepts a mapping of values to their replacement as syntactic sugar for
+    #   `replace_all(old: Series.new(mapping.keys), new: Serie.new(mapping.values))`.
+    # @param new [Object]
+    #   Value or sequence of values to replace by.
+    #   Accepts expression input. Sequences are parsed as Series,
+    #   other non-expression inputs are parsed as literals.
+    #   Length must match the length of `old` or have length 1.
+    # @param default [Object]
+    #   Set values that were not replaced to this value. If no default is specified,
+    #   (default), an error is raised if any values were not replaced.
+    #   Accepts expression input. Non-expression inputs are parsed as literals.
+    # @param return_dtype [Object]
+    #   The data type of the resulting expression. If set to `nil` (default),
+    #   the data type is determined automatically based on the other inputs.
+    #
+    # @return [Expr]
+    #
+    # @note
+    #   The global string cache must be enabled when replacing categorical values.
+    #
+    # @example Replace values by passing sequences to the `old` and `new` parameters.
+    #   df = Polars::DataFrame.new({"a" => [1, 2, 2, 3]})
+    #   df.with_columns(
+    #     replaced: Polars.col("a").replace_strict([1, 2, 3], [100, 200, 300])
+    #   )
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ i64 ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ 1   ┆ 100      │
+    #   # │ 2   ┆ 200      │
+    #   # │ 2   ┆ 200      │
+    #   # │ 3   ┆ 300      │
+    #   # └─────┴──────────┘
+    #
+    # @example By default, an error is raised if any non-null values were not replaced. Specify a default to set all values that were not matched.
+    #   mapping = {2 => 200, 3 => 300}
+    #   df.with_columns(replaced: Polars.col("a").replace_strict(mapping, default: -1))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ i64 ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ 1   ┆ -1       │
+    #   # │ 2   ┆ 200      │
+    #   # │ 2   ┆ 200      │
+    #   # │ 3   ┆ 300      │
+    #   # └─────┴──────────┘
+    #
+    # @example Replacing by values of a different data type sets the return type based on a combination of the `new` data type and the `default` data type.
+    #   df = Polars::DataFrame.new({"a" => ["x", "y", "z"]})
+    #   mapping = {"x" => 1, "y" => 2, "z" => 3}
+    #   df.with_columns(replaced: Polars.col("a").replace_strict(mapping))
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ str ┆ i64      │
+    #   # ╞═════╪══════════╡
+    #   # │ x   ┆ 1        │
+    #   # │ y   ┆ 2        │
+    #   # │ z   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example
+    #   df.with_columns(replaced: Polars.col("a").replace_strict(mapping, default: "x"))
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ str ┆ str      │
+    #   # ╞═════╪══════════╡
+    #   # │ x   ┆ 1        │
+    #   # │ y   ┆ 2        │
+    #   # │ z   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example Set the `return_dtype` parameter to control the resulting data type directly.
+    #   df.with_columns(
+    #     replaced: Polars.col("a").replace_strict(mapping, return_dtype: Polars::UInt8)
+    #   )
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬──────────┐
+    #   # │ a   ┆ replaced │
+    #   # │ --- ┆ ---      │
+    #   # │ str ┆ u8       │
+    #   # ╞═════╪══════════╡
+    #   # │ x   ┆ 1        │
+    #   # │ y   ┆ 2        │
+    #   # │ z   ┆ 3        │
+    #   # └─────┴──────────┘
+    #
+    # @example Expression input is supported for all parameters.
+    #   df = Polars::DataFrame.new({"a" => [1, 2, 2, 3], "b" => [1.5, 2.5, 5.0, 1.0]})
+    #   df.with_columns(
+    #     replaced: Polars.col("a").replace_strict(
+    #       Polars.col("a").max,
+    #       Polars.col("b").sum,
+    #       default: Polars.col("b")
+    #     )
+    #   )
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬─────┬──────────┐
+    #   # │ a   ┆ b   ┆ replaced │
+    #   # │ --- ┆ --- ┆ ---      │
+    #   # │ i64 ┆ f64 ┆ f64      │
+    #   # ╞═════╪═════╪══════════╡
+    #   # │ 1   ┆ 1.5 ┆ 1.5      │
+    #   # │ 2   ┆ 2.5 ┆ 2.5      │
+    #   # │ 2   ┆ 5.0 ┆ 5.0      │
+    #   # │ 3   ┆ 1.0 ┆ 10.0     │
+    #   # └─────┴─────┴──────────┘
+    def replace_strict(
+      old,
+      new = NO_DEFAULT,
+      default: NO_DEFAULT,
+      return_dtype: nil
+    )
+      if new.eql?(NO_DEFAULT) && old.is_a?(Hash)
+        new = Series.new(old.values)
+        old = Series.new(old.keys)
+      end
+
+      old = Utils.parse_into_expression(old, str_as_lit: true, list_as_series: true)
+      new = Utils.parse_into_expression(new, str_as_lit: true, list_as_series: true)
+
+      default = default.eql?(NO_DEFAULT) ? nil : Utils.parse_into_expression(default, str_as_lit: true)
+
+      _from_rbexpr(
+        _rbexpr.replace_strict(old, new, default, return_dtype)
+      )
     end
 
     # Create an object namespace of all list related methods.
@@ -5144,7 +7292,7 @@ module Polars
 
     private
 
-    def wrap_expr(expr)
+    def _from_rbexpr(expr)
       Utils.wrap_expr(expr)
     end
 
@@ -5153,7 +7301,7 @@ module Polars
     end
 
     def _to_expr(other)
-      other.is_a?(Expr) ? other : Utils.lit(other)
+      other.is_a?(Expr) ? other : F.lit(other)
     end
 
     def _prepare_alpha(com, span, half_life, alpha)
@@ -5200,6 +7348,10 @@ module Polars
         min_periods = 1
       end
       [window_size, min_periods]
+    end
+
+    def _prepare_rolling_by_window_args(window_size)
+      window_size
     end
   end
 end

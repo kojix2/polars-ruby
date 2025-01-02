@@ -16,9 +16,9 @@ module Polars
       by,
       start_by
     )
-      period = Utils._timedelta_to_pl_duration(period)
-      offset = Utils._timedelta_to_pl_duration(offset)
-      every = Utils._timedelta_to_pl_duration(every)
+      period = Utils.parse_as_duration_string(period)
+      offset = Utils.parse_as_duration_string(offset)
+      every = Utils.parse_as_duration_string(every)
 
       @df = df
       @time_column = index_column
@@ -32,7 +32,7 @@ module Polars
       @start_by = start_by
     end
 
-    def agg(aggs)
+    def agg(*aggs, **named_aggs)
       @df.lazy
         .group_by_dynamic(
           @time_column,
@@ -45,7 +45,7 @@ module Polars
           by: @by,
           start_by: @start_by
         )
-        .agg(aggs)
+        .agg(*aggs, **named_aggs)
         .collect(no_optimization: true, string_cache: false)
     end
   end

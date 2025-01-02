@@ -27,145 +27,6 @@ module Polars
       ldf
     end
 
-    # @private
-    def self._scan_csv(
-      file,
-      has_header: true,
-      sep: ",",
-      comment_char: nil,
-      quote_char: '"',
-      skip_rows: 0,
-      dtypes: nil,
-      null_values: nil,
-      ignore_errors: false,
-      cache: true,
-      with_column_names: nil,
-      infer_schema_length: 100,
-      n_rows: nil,
-      encoding: "utf8",
-      low_memory: false,
-      rechunk: true,
-      skip_rows_after_header: 0,
-      row_count_name: nil,
-      row_count_offset: 0,
-      parse_dates: false,
-      eol_char: "\n"
-    )
-      dtype_list = nil
-      if !dtypes.nil?
-        dtype_list = []
-        dtypes.each do |k, v|
-          dtype_list << [k, Utils.rb_type_to_dtype(v)]
-        end
-      end
-      processed_null_values = Utils._process_null_values(null_values)
-
-      _from_rbldf(
-        RbLazyFrame.new_from_csv(
-          file,
-          sep,
-          has_header,
-          ignore_errors,
-          skip_rows,
-          n_rows,
-          cache,
-          dtype_list,
-          low_memory,
-          comment_char,
-          quote_char,
-          processed_null_values,
-          infer_schema_length,
-          with_column_names,
-          rechunk,
-          skip_rows_after_header,
-          encoding,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset),
-          parse_dates,
-          eol_char
-        )
-      )
-    end
-
-    # @private
-    def self._scan_parquet(
-      file,
-      n_rows: nil,
-      cache: true,
-      parallel: "auto",
-      rechunk: true,
-      row_count_name: nil,
-      row_count_offset: 0,
-      storage_options: nil,
-      low_memory: false,
-      use_statistics: true,
-      hive_partitioning: true
-    )
-      _from_rbldf(
-        RbLazyFrame.new_from_parquet(
-          file,
-          n_rows,
-          cache,
-          parallel,
-          rechunk,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset),
-          low_memory,
-          use_statistics,
-          hive_partitioning
-        )
-      )
-    end
-
-    # @private
-    def self._scan_ipc(
-      file,
-      n_rows: nil,
-      cache: true,
-      rechunk: true,
-      row_count_name: nil,
-      row_count_offset: 0,
-      storage_options: nil,
-      memory_map: true
-    )
-      if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
-      end
-
-      _from_rbldf(
-        RbLazyFrame.new_from_ipc(
-          file,
-          n_rows,
-          cache,
-          rechunk,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset),
-          memory_map
-        )
-      )
-    end
-
-    # @private
-    def self._scan_ndjson(
-      file,
-      infer_schema_length: nil,
-      batch_size: nil,
-      n_rows: nil,
-      low_memory: false,
-      rechunk: true,
-      row_count_name: nil,
-      row_count_offset: 0
-    )
-      _from_rbldf(
-        RbLazyFrame.new_from_ndjson(
-          file,
-          infer_schema_length,
-          batch_size,
-          n_rows,
-          low_memory,
-          rechunk,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset)
-        )
-      )
-    end
-
     # def self.from_json
     # end
 
@@ -177,7 +38,7 @@ module Polars
     # @return [LazyFrame]
     def self.read_json(file)
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
       end
 
       Utils.wrap_ldf(RbLazyFrame.read_json(file))
@@ -202,7 +63,7 @@ module Polars
     #   df.columns
     #   # => ["foo", "bar"]
     def columns
-      _ldf.columns
+      _ldf.collect_schema.keys
     end
 
     # Get dtypes of columns in LazyFrame.
@@ -218,9 +79,9 @@ module Polars
     #     }
     #   ).lazy
     #   lf.dtypes
-    #   # => [Polars::Int64, Polars::Float64, Polars::Utf8]
+    #   # => [Polars::Int64, Polars::Float64, Polars::String]
     def dtypes
-      _ldf.dtypes
+      _ldf.collect_schema.values
     end
 
     # Get the schema.
@@ -236,9 +97,9 @@ module Polars
     #     }
     #   ).lazy
     #   lf.schema
-    #   # => {"foo"=>Polars::Int64, "bar"=>Polars::Float64, "ham"=>Polars::Utf8}
+    #   # => {"foo"=>Polars::Int64, "bar"=>Polars::Float64, "ham"=>Polars::String}
     def schema
-      _ldf.schema
+      _ldf.collect_schema
     end
 
     # Get the width of the LazyFrame.
@@ -250,7 +111,7 @@ module Polars
     #   lf.width
     #   # => 2
     def width
-      _ldf.width
+      _ldf.collect_schema.length
     end
 
     # Check if LazyFrame includes key.
@@ -284,7 +145,7 @@ module Polars
     # @return [nil]
     def write_json(file)
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
       end
       _ldf.write_json(file)
       nil
@@ -308,7 +169,7 @@ module Polars
     #   end
     #
     #   df = Polars::DataFrame.new({"a" => [1, 2, 3, 4], "b" => ["10", "20", "30", "40"]}).lazy
-    #   df.pipe(cast_str_to_int, col_name: "b").collect()
+    #   df.pipe(cast_str_to_int, col_name: "b").collect
     #   # =>
     #   # shape: (4, 2)
     #   # ┌─────┬─────┐
@@ -342,6 +203,7 @@ module Polars
       simplify_expression: true,
       slice_pushdown: true,
       common_subplan_elimination: true,
+      comm_subexpr_elim: true,
       allow_streaming: false
     )
       ldf = _ldf.optimization_toggle(
@@ -351,7 +213,9 @@ module Polars
         simplify_expression,
         slice_pushdown,
         common_subplan_elimination,
+        comm_subexpr_elim,
         allow_streaming,
+        false
       )
 
       ldf.describe_optimized_plan
@@ -397,16 +261,23 @@ module Polars
     #   # │ 2   ┆ 7.0 ┆ b   │
     #   # │ 1   ┆ 6.0 ┆ a   │
     #   # └─────┴─────┴─────┘
-    def sort(by, reverse: false, nulls_last: false, maintain_order: false)
-      if by.is_a?(String)
-        return _from_rbldf(_ldf.sort(by, reverse, nulls_last, maintain_order))
-      end
-      if Utils.bool?(reverse)
-        reverse = [reverse]
+    def sort(by, *more_by, reverse: false, nulls_last: false, maintain_order: false, multithreaded: true)
+      if by.is_a?(::String) && more_by.empty?
+        return _from_rbldf(
+          _ldf.sort(
+            by, reverse, nulls_last, maintain_order, multithreaded
+          )
+        )
       end
 
-      by = Utils.selection_to_rbexpr_list(by)
-      _from_rbldf(_ldf.sort_by_exprs(by, reverse, nulls_last, maintain_order))
+      by = Utils.parse_into_list_of_expressions(by, *more_by)
+      reverse = Utils.extend_bool(reverse, by.length, "reverse", "by")
+      nulls_last = Utils.extend_bool(nulls_last, by.length, "nulls_last", "by")
+      _from_rbldf(
+        _ldf.sort_by_exprs(
+          by, reverse, nulls_last, maintain_order, multithreaded
+        )
+      )
     end
 
     # def profile
@@ -468,13 +339,16 @@ module Polars
       no_optimization: false,
       slice_pushdown: true,
       common_subplan_elimination: true,
-      allow_streaming: false
+      comm_subexpr_elim: true,
+      allow_streaming: false,
+      _eager: false
     )
       if no_optimization
         predicate_pushdown = false
         projection_pushdown = false
         slice_pushdown = false
         common_subplan_elimination = false
+        comm_subexpr_elim = false
       end
 
       if allow_streaming
@@ -488,7 +362,9 @@ module Polars
         simplify_expression,
         slice_pushdown,
         common_subplan_elimination,
-        allow_streaming
+        comm_subexpr_elim,
+        allow_streaming,
+        _eager
       )
       Utils.wrap_df(ldf.collect)
     end
@@ -546,7 +422,7 @@ module Polars
       path,
       compression: "zstd",
       compression_level: nil,
-      statistics: false,
+      statistics: true,
       row_group_size: nil,
       data_pagesize_limit: nil,
       maintain_order: true,
@@ -555,23 +431,43 @@ module Polars
       projection_pushdown: true,
       simplify_expression: true,
       no_optimization: false,
-      slice_pushdown: true
+      slice_pushdown: true,
+      storage_options: nil,
+      retries: 2
     )
-      if no_optimization
-        predicate_pushdown = false
-        projection_pushdown = false
-        slice_pushdown = false
+      lf = _set_sink_optimizations(
+        type_coercion: type_coercion,
+        predicate_pushdown: predicate_pushdown,
+        projection_pushdown: projection_pushdown,
+        simplify_expression: simplify_expression,
+        slice_pushdown: slice_pushdown,
+        no_optimization: no_optimization
+      )
+
+      if statistics == true
+        statistics = {
+          min: true,
+          max: true,
+          distinct_count: false,
+          null_count: true
+        }
+      elsif statistics == false
+        statistics = {}
+      elsif statistics == "full"
+        statistics = {
+          min: true,
+          max: true,
+          distinct_count: true,
+          null_count: true
+        }
       end
 
-      lf = _ldf.optimization_toggle(
-        type_coercion,
-        predicate_pushdown,
-        projection_pushdown,
-        simplify_expression,
-        slice_pushdown,
-        false,
-        true
-      )
+      if storage_options&.any?
+        storage_options = storage_options.to_a
+      else
+        storage_options = nil
+      end
+
       lf.sink_parquet(
         path,
         compression,
@@ -579,7 +475,292 @@ module Polars
         statistics,
         row_group_size,
         data_pagesize_limit,
+        maintain_order,
+        storage_options,
+        retries
+      )
+    end
+
+    # Evaluate the query in streaming mode and write to an IPC file.
+    #
+    # This allows streaming results that are larger than RAM to be written to disk.
+    #
+    # @param path [String]
+    #   File path to which the file should be written.
+    # @param compression ["lz4", "zstd"]
+    #   Choose "zstd" for good compression performance.
+    #   Choose "lz4" for fast compression/decompression.
+    # @param maintain_order [Boolean]
+    #   Maintain the order in which data is processed.
+    #   Setting this to `false` will  be slightly faster.
+    # @param type_coercion [Boolean]
+    #   Do type coercion optimization.
+    # @param predicate_pushdown [Boolean]
+    #   Do predicate pushdown optimization.
+    # @param projection_pushdown [Boolean]
+    #   Do projection pushdown optimization.
+    # @param simplify_expression [Boolean]
+    #   Run simplify expressions optimization.
+    # @param slice_pushdown [Boolean]
+    #   Slice pushdown optimization.
+    # @param no_optimization [Boolean]
+    #   Turn off (certain) optimizations.
+    #
+    # @return [DataFrame]
+    #
+    # @example
+    #   lf = Polars.scan_csv("/path/to/my_larger_than_ram_file.csv")
+    #   lf.sink_ipc("out.arrow")
+    def sink_ipc(
+      path,
+      compression: "zstd",
+      maintain_order: true,
+      type_coercion: true,
+      predicate_pushdown: true,
+      projection_pushdown: true,
+      simplify_expression: true,
+      slice_pushdown: true,
+      no_optimization: false
+    )
+      # TODO support storage options in Rust
+      storage_options = nil
+      retries = 2
+
+      lf = _set_sink_optimizations(
+        type_coercion: type_coercion,
+        predicate_pushdown: predicate_pushdown,
+        projection_pushdown: projection_pushdown,
+        simplify_expression: simplify_expression,
+        slice_pushdown: slice_pushdown,
+        no_optimization: no_optimization
+      )
+
+      if storage_options&.any?
+        storage_options = storage_options.to_a
+      else
+        storage_options = nil
+      end
+
+      lf.sink_ipc(
+        path,
+        compression,
+        maintain_order,
+        storage_options,
+        retries
+      )
+    end
+
+    # Evaluate the query in streaming mode and write to a CSV file.
+    #
+    # This allows streaming results that are larger than RAM to be written to disk.
+    #
+    # @param path [String]
+    #   File path to which the file should be written.
+    # @param include_bom [Boolean]
+    #   Whether to include UTF-8 BOM in the CSV output.
+    # @param include_header [Boolean]
+    #   Whether to include header in the CSV output.
+    # @param separator [String]
+    #   Separate CSV fields with this symbol.
+    # @param line_terminator [String]
+    #   String used to end each row.
+    # @param quote_char [String]
+    #   Byte to use as quoting character.
+    # @param batch_size [Integer]
+    #   Number of rows that will be processed per thread.
+    # @param datetime_format [String]
+    #   A format string, with the specifiers defined by the
+    #   `chrono <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>`_
+    #   Rust crate. If no format specified, the default fractional-second
+    #   precision is inferred from the maximum timeunit found in the frame's
+    #   Datetime cols (if any).
+    # @param date_format [String]
+    #   A format string, with the specifiers defined by the
+    #   `chrono <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>`_
+    #   Rust crate.
+    # @param time_format [String]
+    #   A format string, with the specifiers defined by the
+    #   `chrono <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>`_
+    #   Rust crate.
+    # @param float_precision [Integer]
+    #   Number of decimal places to write, applied to both `Float32` and
+    #   `Float64` datatypes.
+    # @param null_value [String]
+    #   A string representing null values (defaulting to the empty string).
+    # @param quote_style ["necessary", "always", "non_numeric", "never"]
+    #   Determines the quoting strategy used.
+    #
+    #   - necessary (default): This puts quotes around fields only when necessary.
+    #     They are necessary when fields contain a quote,
+    #     delimiter or record terminator.
+    #     Quotes are also necessary when writing an empty record
+    #     (which is indistinguishable from a record with one empty field).
+    #     This is the default.
+    #   - always: This puts quotes around every field. Always.
+    #   - never: This never puts quotes around fields, even if that results in
+    #     invalid CSV data (e.g.: by not quoting strings containing the
+    #     separator).
+    #   - non_numeric: This puts quotes around all fields that are non-numeric.
+    #     Namely, when writing a field that does not parse as a valid float
+    #     or integer, then quotes will be used even if they aren`t strictly
+    #     necessary.
+    # @param maintain_order [Boolean]
+    #   Maintain the order in which data is processed.
+    #   Setting this to `false` will  be slightly faster.
+    # @param type_coercion [Boolean]
+    #   Do type coercion optimization.
+    # @param predicate_pushdown [Boolean]
+    #   Do predicate pushdown optimization.
+    # @param projection_pushdown [Boolean]
+    #   Do projection pushdown optimization.
+    # @param simplify_expression [Boolean]
+    #   Run simplify expressions optimization.
+    # @param slice_pushdown [Boolean]
+    #   Slice pushdown optimization.
+    # @param no_optimization [Boolean]
+    #   Turn off (certain) optimizations.
+    #
+    # @return [DataFrame]
+    #
+    # @example
+    #   lf = Polars.scan_csv("/path/to/my_larger_than_ram_file.csv")
+    #   lf.sink_csv("out.csv")
+    def sink_csv(
+      path,
+      include_bom: false,
+      include_header: true,
+      separator: ",",
+      line_terminator: "\n",
+      quote_char: '"',
+      batch_size: 1024,
+      datetime_format: nil,
+      date_format: nil,
+      time_format: nil,
+      float_scientific: nil,
+      float_precision: nil,
+      null_value: nil,
+      quote_style: nil,
+      maintain_order: true,
+      type_coercion: true,
+      predicate_pushdown: true,
+      projection_pushdown: true,
+      simplify_expression: true,
+      slice_pushdown: true,
+      no_optimization: false
+    )
+      Utils._check_arg_is_1byte("separator", separator, false)
+      Utils._check_arg_is_1byte("quote_char", quote_char, false)
+
+      lf = _set_sink_optimizations(
+        type_coercion: type_coercion,
+        predicate_pushdown: predicate_pushdown,
+        projection_pushdown: projection_pushdown,
+        simplify_expression: simplify_expression,
+        slice_pushdown: slice_pushdown,
+        no_optimization: no_optimization
+      )
+
+      lf.sink_csv(
+        path,
+        include_bom,
+        include_header,
+        separator.ord,
+        line_terminator,
+        quote_char.ord,
+        batch_size,
+        datetime_format,
+        date_format,
+        time_format,
+        float_scientific,
+        float_precision,
+        null_value,
+        quote_style,
         maintain_order
+      )
+    end
+
+    # Evaluate the query in streaming mode and write to an NDJSON file.
+    #
+    # This allows streaming results that are larger than RAM to be written to disk.
+    #
+    # @param path [String]
+    #   File path to which the file should be written.
+    # @param maintain_order [Boolean]
+    #   Maintain the order in which data is processed.
+    #   Setting this to `false` will be slightly faster.
+    # @param type_coercion [Boolean]
+    #   Do type coercion optimization.
+    # @param predicate_pushdown [Boolean]
+    #   Do predicate pushdown optimization.
+    # @param projection_pushdown [Boolean]
+    #   Do projection pushdown optimization.
+    # @param simplify_expression [Boolean]
+    #   Run simplify expressions optimization.
+    # @param slice_pushdown [Boolean]
+    #   Slice pushdown optimization.
+    # @param no_optimization [Boolean]
+    #   Turn off (certain) optimizations.
+    #
+    # @return [DataFrame]
+    #
+    # @example
+    #   lf = Polars.scan_csv("/path/to/my_larger_than_ram_file.csv")
+    #   lf.sink_ndjson("out.ndjson")
+    def sink_ndjson(
+      path,
+      maintain_order: true,
+      type_coercion: true,
+      predicate_pushdown: true,
+      projection_pushdown: true,
+      simplify_expression: true,
+      slice_pushdown: true,
+      no_optimization: false,
+      storage_options: nil,
+      retries: 2
+    )
+      lf = _set_sink_optimizations(
+        type_coercion: type_coercion,
+        predicate_pushdown: predicate_pushdown,
+        projection_pushdown: projection_pushdown,
+        simplify_expression: simplify_expression,
+        slice_pushdown: slice_pushdown,
+        no_optimization: no_optimization
+      )
+
+      if storage_options&.any?
+        storage_options = storage_options.to_a
+      else
+        storage_options = nil
+      end
+
+      lf.sink_json(path, maintain_order, storage_options, retries)
+    end
+
+    # @private
+    def _set_sink_optimizations(
+      type_coercion: true,
+      predicate_pushdown: true,
+      projection_pushdown: true,
+      simplify_expression: true,
+      slice_pushdown: true,
+      no_optimization: false
+    )
+      if no_optimization
+        predicate_pushdown = false
+        projection_pushdown = false
+        slice_pushdown = false
+      end
+
+      _ldf.optimization_toggle(
+        type_coercion,
+        predicate_pushdown,
+        projection_pushdown,
+        simplify_expression,
+        slice_pushdown,
+        false,
+        false,
+        true,
+        false
       )
     end
 
@@ -646,6 +827,7 @@ module Polars
       no_optimization: false,
       slice_pushdown: true,
       common_subplan_elimination: true,
+      comm_subexpr_elim: true,
       allow_streaming: false
     )
       if no_optimization
@@ -662,7 +844,9 @@ module Polars
         simplify_expression,
         slice_pushdown,
         common_subplan_elimination,
-        allow_streaming
+        comm_subexpr_elim,
+        allow_streaming,
+        false
       )
       Utils.wrap_df(ldf.fetch(n_rows))
     end
@@ -694,6 +878,71 @@ module Polars
       _from_rbldf(_ldf.cache)
     end
 
+    # Cast LazyFrame column(s) to the specified dtype(s).
+    #
+    # @param dtypes [Hash]
+    #   Mapping of column names (or selector) to dtypes, or a single dtype
+    #   to which all columns will be cast.
+    # @param strict [Boolean]
+    #   Throw an error if a cast could not be done (for instance, due to an
+    #   overflow).
+    #
+    # @return [LazyFrame]
+    #
+    # @example Cast specific frame columns to the specified dtypes:
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6.0, 7.0, 8.0],
+    #       "ham" => [Date.new(2020, 1, 2), Date.new(2021, 3, 4), Date.new(2022, 5, 6)]
+    #     }
+    #   )
+    #   lf.cast({"foo" => Polars::Float32, "bar" => Polars::UInt8}).collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬────────────┐
+    #   # │ foo ┆ bar ┆ ham        │
+    #   # │ --- ┆ --- ┆ ---        │
+    #   # │ f32 ┆ u8  ┆ date       │
+    #   # ╞═════╪═════╪════════════╡
+    #   # │ 1.0 ┆ 6   ┆ 2020-01-02 │
+    #   # │ 2.0 ┆ 7   ┆ 2021-03-04 │
+    #   # │ 3.0 ┆ 8   ┆ 2022-05-06 │
+    #   # └─────┴─────┴────────────┘
+    #
+    # @example Cast all frame columns matching one dtype (or dtype group) to another dtype:
+    #   lf.cast({Polars::Date => Polars::Datetime}).collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬─────────────────────┐
+    #   # │ foo ┆ bar ┆ ham                 │
+    #   # │ --- ┆ --- ┆ ---                 │
+    #   # │ i64 ┆ f64 ┆ datetime[μs]        │
+    #   # ╞═════╪═════╪═════════════════════╡
+    #   # │ 1   ┆ 6.0 ┆ 2020-01-02 00:00:00 │
+    #   # │ 2   ┆ 7.0 ┆ 2021-03-04 00:00:00 │
+    #   # │ 3   ┆ 8.0 ┆ 2022-05-06 00:00:00 │
+    #   # └─────┴─────┴─────────────────────┘
+    #
+    # @example Cast all frame columns to the specified dtype:
+    #   lf.cast(Polars::String).collect.to_h(as_series: false)
+    #   # => {"foo"=>["1", "2", "3"], "bar"=>["6.0", "7.0", "8.0"], "ham"=>["2020-01-02", "2021-03-04", "2022-05-06"]}
+    def cast(dtypes, strict: true)
+      if !dtypes.is_a?(Hash)
+        return _from_rbldf(_ldf.cast_all(dtypes, strict))
+      end
+
+      cast_map = {}
+      dtypes.each do |c, dtype|
+        dtype = Utils.parse_into_dtype(dtype)
+        cast_map.merge!(
+          c.is_a?(::String) ? {c => dtype} : Utils.expand_selector(self, c).to_h { |x| [x, dtype] }
+        )
+      end
+
+      _from_rbldf(_ldf.cast(cast_map, strict))
+    end
+
     # Create an empty copy of the current LazyFrame.
     #
     # The copy has an identical schema but no data.
@@ -701,14 +950,14 @@ module Polars
     # @return [LazyFrame]
     #
     # @example
-    #   df = Polars::DataFrame.new(
+    #   lf = Polars::LazyFrame.new(
     #     {
     #       "a" => [nil, 2, 3, 4],
     #       "b" => [0.5, nil, 2.5, 13],
     #       "c" => [true, true, false, nil],
     #     }
     #   ).lazy
-    #   df.cleared.fetch
+    #   lf.clear.fetch
     #   # =>
     #   # shape: (0, 3)
     #   # ┌─────┬─────┬──────┐
@@ -717,9 +966,23 @@ module Polars
     #   # │ i64 ┆ f64 ┆ bool │
     #   # ╞═════╪═════╪══════╡
     #   # └─────┴─────┴──────┘
-    def cleared
-      DataFrame.new(columns: schema).lazy
+    #
+    # @example
+    #   lf.clear(2).fetch
+    #   # =>
+    #   # shape: (2, 3)
+    #   # ┌──────┬──────┬──────┐
+    #   # │ a    ┆ b    ┆ c    │
+    #   # │ ---  ┆ ---  ┆ ---  │
+    #   # │ i64  ┆ f64  ┆ bool │
+    #   # ╞══════╪══════╪══════╡
+    #   # │ null ┆ null ┆ null │
+    #   # │ null ┆ null ┆ null │
+    #   # └──────┴──────┴──────┘
+    def clear(n = 0)
+      DataFrame.new(columns: schema).clear(n).lazy
     end
+    alias_method :cleared, :clear
 
     # Filter the rows in the DataFrame based on a predicate expression.
     #
@@ -762,15 +1025,20 @@ module Polars
     def filter(predicate)
       _from_rbldf(
         _ldf.filter(
-          Utils.expr_to_lit_or_expr(predicate, str_to_lit: false)._rbexpr
+          Utils.parse_into_expression(predicate, str_as_lit: false)
         )
       )
     end
 
     # Select columns from this DataFrame.
     #
-    # @param exprs [Object]
-    #   Column or columns to select.
+    # @param exprs [Array]
+    #   Column(s) to select, specified as positional arguments.
+    #   Accepts expression input. Strings are parsed as column names,
+    #   other non-expression inputs are parsed as literals.
+    # @param named_exprs [Hash]
+    #   Additional columns to select, specified as keyword arguments.
+    #   The columns will be renamed to the keyword used.
     #
     # @return [LazyFrame]
     #
@@ -844,25 +1112,31 @@ module Polars
     #   # ┌─────────┐
     #   # │ literal │
     #   # │ ---     │
-    #   # │ i64     │
+    #   # │ i32     │
     #   # ╞═════════╡
     #   # │ 0       │
     #   # │ 0       │
     #   # │ 10      │
     #   # └─────────┘
-    def select(exprs)
-      exprs = Utils.selection_to_rbexpr_list(exprs)
-      _from_rbldf(_ldf.select(exprs))
+    def select(*exprs, **named_exprs)
+      structify = ENV.fetch("POLARS_AUTO_STRUCTIFY", "0") != "0"
+
+      rbexprs = Utils.parse_into_list_of_expressions(
+        *exprs, **named_exprs, __structify: structify
+      )
+      _from_rbldf(_ldf.select(rbexprs))
     end
 
     # Start a group by operation.
     #
-    # @param by [Object]
+    # @param by [Array]
     #   Column(s) to group by.
     # @param maintain_order [Boolean]
     #   Make sure that the order of the groups remain consistent. This is more
     #   expensive than a default group by.
-    #
+    # @param named_by [Hash]
+    #   Additional columns to group by, specified as keyword arguments.
+    #   The columns will be renamed to the keyword used.
     # @return [LazyGroupBy]
     #
     # @example
@@ -885,9 +1159,9 @@ module Polars
     #   # │ b   ┆ 11  │
     #   # │ c   ┆ 6   │
     #   # └─────┴─────┘
-    def group_by(by, maintain_order: false)
-      rbexprs_by = Utils.selection_to_rbexpr_list(by)
-      lgb = _ldf.group_by(rbexprs_by, maintain_order)
+    def group_by(*by, maintain_order: false, **named_by)
+      exprs = Utils.parse_into_list_of_expressions(*by, **named_by)
+      lgb = _ldf.group_by(exprs, maintain_order)
       LazyGroupBy.new(lgb)
     end
     alias_method :groupby, :group_by
@@ -941,12 +1215,6 @@ module Polars
     #   Define whether the temporal window interval is closed or not.
     # @param by [Object]
     #   Also group by this column/these columns.
-    # @param check_sorted [Boolean]
-    #   When the `by` argument is given, polars can not check sortedness
-    #   by the metadata and has to do a full scan on the index column to
-    #   verify data is sorted. This is expensive. If you are sure the
-    #   data within the by groups is sorted, you can set this to `false`.
-    #   Doing so incorrectly will lead to incorrect output
     #
     # @return [LazyFrame]
     #
@@ -962,7 +1230,7 @@ module Polars
     #   df = Polars::LazyFrame.new({"dt" => dates, "a" => [3, 7, 5, 9, 2, 1]}).with_column(
     #     Polars.col("dt").str.strptime(Polars::Datetime).set_sorted
     #   )
-    #   df.group_by_rolling(index_column: "dt", period: "2d").agg(
+    #   df.rolling(index_column: "dt", period: "2d").agg(
     #     [
     #       Polars.sum("a").alias("sum_a"),
     #       Polars.min("a").alias("min_a"),
@@ -983,29 +1251,29 @@ module Polars
     #   # │ 2020-01-03 19:45:32 ┆ 11    ┆ 2     ┆ 9     │
     #   # │ 2020-01-08 23:16:43 ┆ 1     ┆ 1     ┆ 1     │
     #   # └─────────────────────┴───────┴───────┴───────┘
-    def group_by_rolling(
+    def rolling(
       index_column:,
       period:,
       offset: nil,
       closed: "right",
-      by: nil,
-      check_sorted: true
+      by: nil
     )
-      index_column = Utils.parse_as_expression(index_column)
+      index_column = Utils.parse_into_expression(index_column)
       if offset.nil?
-        offset = "-#{period}"
+        offset = Utils.negate_duration_string(Utils.parse_as_duration_string(period))
       end
 
-      rbexprs_by = by.nil? ? [] : Utils.selection_to_rbexpr_list(by)
-      period = Utils._timedelta_to_pl_duration(period)
-      offset = Utils._timedelta_to_pl_duration(offset)
-
-      lgb = _ldf.group_by_rolling(
-        index_column, period, offset, closed, rbexprs_by, check_sorted
+      rbexprs_by = (
+        !by.nil? ? Utils.parse_into_list_of_expressions(by) : []
       )
+      period = Utils.parse_as_duration_string(period)
+      offset = Utils.parse_as_duration_string(offset)
+
+      lgb = _ldf.rolling(index_column, period, offset, closed, rbexprs_by)
       LazyGroupBy.new(lgb)
     end
-    alias_method :groupby_rolling, :group_by_rolling
+    alias_method :group_by_rolling, :rolling
+    alias_method :groupby_rolling, :rolling
 
     # Group based on a time value (or index value of type `:i32`, `:i64`).
     #
@@ -1069,22 +1337,18 @@ module Polars
     #   Define whether the temporal window interval is closed or not.
     # @param by [Object]
     #   Also group by this column/these columns
-    # @param check_sorted [Boolean]
-    #   When the `by` argument is given, polars can not check sortedness
-    #   by the metadata and has to do a full scan on the index column to
-    #   verify data is sorted. This is expensive. If you are sure the
-    #   data within the by groups is sorted, you can set this to `false`.
-    #   Doing so incorrectly will lead to incorrect output.
     #
     # @return [DataFrame]
     #
     # @example
     #   df = Polars::DataFrame.new(
     #     {
-    #       "time" => Polars.date_range(
+    #       "time" => Polars.datetime_range(
     #         DateTime.new(2021, 12, 16),
     #         DateTime.new(2021, 12, 16, 3),
-    #         "30m"
+    #         "30m",
+    #         time_unit: "us",
+    #         eager: true
     #       ),
     #       "n" => 0..6
     #     }
@@ -1151,16 +1415,16 @@ module Polars
     #   )
     #   # =>
     #   # shape: (4, 3)
-    #   # ┌─────────────────────┬────────────┬───────────────────────────────────┐
-    #   # │ time                ┆ time_count ┆ time_agg_list                     │
-    #   # │ ---                 ┆ ---        ┆ ---                               │
-    #   # │ datetime[μs]        ┆ u32        ┆ list[datetime[μs]]                │
-    #   # ╞═════════════════════╪════════════╪═══════════════════════════════════╡
-    #   # │ 2021-12-16 00:00:00 ┆ 2          ┆ [2021-12-16 00:00:00, 2021-12-16… │
-    #   # │ 2021-12-16 01:00:00 ┆ 2          ┆ [2021-12-16 01:00:00, 2021-12-16… │
-    #   # │ 2021-12-16 02:00:00 ┆ 2          ┆ [2021-12-16 02:00:00, 2021-12-16… │
-    #   # │ 2021-12-16 03:00:00 ┆ 1          ┆ [2021-12-16 03:00:00]             │
-    #   # └─────────────────────┴────────────┴───────────────────────────────────┘
+    #   # ┌─────────────────────┬────────────┬─────────────────────────────────┐
+    #   # │ time                ┆ time_count ┆ time_agg_list                   │
+    #   # │ ---                 ┆ ---        ┆ ---                             │
+    #   # │ datetime[μs]        ┆ u32        ┆ list[datetime[μs]]              │
+    #   # ╞═════════════════════╪════════════╪═════════════════════════════════╡
+    #   # │ 2021-12-16 00:00:00 ┆ 2          ┆ [2021-12-16 00:00:00, 2021-12-… │
+    #   # │ 2021-12-16 01:00:00 ┆ 2          ┆ [2021-12-16 01:00:00, 2021-12-… │
+    #   # │ 2021-12-16 02:00:00 ┆ 2          ┆ [2021-12-16 02:00:00, 2021-12-… │
+    #   # │ 2021-12-16 03:00:00 ┆ 1          ┆ [2021-12-16 03:00:00]           │
+    #   # └─────────────────────┴────────────┴─────────────────────────────────┘
     #
     # @example When closed="both" the time values at the window boundaries belong to 2 groups.
     #   df.group_by_dynamic("time", every: "1h", closed: "both").agg(
@@ -1183,10 +1447,12 @@ module Polars
     # @example Dynamic group bys can also be combined with grouping on normal keys.
     #   df = Polars::DataFrame.new(
     #     {
-    #       "time" => Polars.date_range(
+    #       "time" => Polars.datetime_range(
     #         DateTime.new(2021, 12, 16),
     #         DateTime.new(2021, 12, 16, 3),
-    #         "30m"
+    #         "30m",
+    #         time_unit: "us",
+    #         eager: true
     #       ),
     #       "groups" => ["a", "a", "a", "b", "b", "a", "a"]
     #     }
@@ -1229,12 +1495,13 @@ module Polars
     #     closed: "right"
     #   ).agg(Polars.col("A").alias("A_agg_list"))
     #   # =>
-    #   # shape: (3, 4)
+    #   # shape: (4, 4)
     #   # ┌─────────────────┬─────────────────┬─────┬─────────────────┐
     #   # │ _lower_boundary ┆ _upper_boundary ┆ idx ┆ A_agg_list      │
     #   # │ ---             ┆ ---             ┆ --- ┆ ---             │
     #   # │ i64             ┆ i64             ┆ i64 ┆ list[str]       │
     #   # ╞═════════════════╪═════════════════╪═════╪═════════════════╡
+    #   # │ -2              ┆ 1               ┆ -2  ┆ ["A", "A"]      │
     #   # │ 0               ┆ 3               ┆ 0   ┆ ["A", "B", "B"] │
     #   # │ 2               ┆ 5               ┆ 2   ┆ ["B", "B", "C"] │
     #   # │ 4               ┆ 7               ┆ 4   ┆ ["C"]           │
@@ -1249,14 +1516,13 @@ module Polars
       closed: "left",
       label: "left",
       by: nil,
-      start_by: "window",
-      check_sorted: true
+      start_by: "window"
     )
       if !truncate.nil?
         label = truncate ? "left" : "datapoint"
       end
 
-      index_column = Utils.expr_to_lit_or_expr(index_column, str_to_lit: false)
+      index_column = Utils.parse_into_expression(index_column, str_as_lit: false)
       if offset.nil?
         offset = period.nil? ? "-#{every}" : "0ns"
       end
@@ -1265,13 +1531,13 @@ module Polars
         period = every
       end
 
-      period = Utils._timedelta_to_pl_duration(period)
-      offset = Utils._timedelta_to_pl_duration(offset)
-      every = Utils._timedelta_to_pl_duration(every)
+      period = Utils.parse_as_duration_string(period)
+      offset = Utils.parse_as_duration_string(offset)
+      every = Utils.parse_as_duration_string(every)
 
-      rbexprs_by = by.nil? ? [] : Utils.selection_to_rbexpr_list(by)
+      rbexprs_by = by.nil? ? [] : Utils.parse_into_list_of_expressions(by)
       lgb = _ldf.group_by_dynamic(
-        index_column._rbexpr,
+        index_column,
         every,
         period,
         offset,
@@ -1279,8 +1545,7 @@ module Polars
         include_boundaries,
         closed,
         rbexprs_by,
-        start_by,
-        check_sorted
+        start_by
       )
       LazyGroupBy.new(lgb)
     end
@@ -1346,8 +1611,197 @@ module Polars
     # @param force_parallel [Boolean]
     #   Force the physical plan to evaluate the computation of both DataFrames up to
     #   the join in parallel.
+    # @param coalesce [Boolean]
+    #   Coalescing behavior (merging of join columns).
+    #     - true: -> Always coalesce join columns.
+    #     - false: -> Never coalesce join columns.
+    #   Note that joining on any other expressions than `col` will turn off coalescing.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   gdp = Polars::LazyFrame.new(
+    #     {
+    #       "date" => Polars.date_range(
+    #         Date.new(2016, 1, 1),
+    #         Date.new(2020, 1, 1),
+    #         "1y",
+    #         eager: true
+    #       ),
+    #       "gdp" => [4164, 4411, 4566, 4696, 4827]
+    #     }
+    #   )
+    #   gdp.collect
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌────────────┬──────┐
+    #   # │ date       ┆ gdp  │
+    #   # │ ---        ┆ ---  │
+    #   # │ date       ┆ i64  │
+    #   # ╞════════════╪══════╡
+    #   # │ 2016-01-01 ┆ 4164 │
+    #   # │ 2017-01-01 ┆ 4411 │
+    #   # │ 2018-01-01 ┆ 4566 │
+    #   # │ 2019-01-01 ┆ 4696 │
+    #   # │ 2020-01-01 ┆ 4827 │
+    #   # └────────────┴──────┘
+    #
+    # @example
+    #   population = Polars::LazyFrame.new(
+    #     {
+    #       "date" => [Date.new(2016, 3, 1), Date.new(2018, 8, 1), Date.new(2019, 1, 1)],
+    #       "population" => [82.19, 82.66, 83.12]
+    #     }
+    #   ).sort("date")
+    #   population.collect
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌────────────┬────────────┐
+    #   # │ date       ┆ population │
+    #   # │ ---        ┆ ---        │
+    #   # │ date       ┆ f64        │
+    #   # ╞════════════╪════════════╡
+    #   # │ 2016-03-01 ┆ 82.19      │
+    #   # │ 2018-08-01 ┆ 82.66      │
+    #   # │ 2019-01-01 ┆ 83.12      │
+    #   # └────────────┴────────────┘
+    #
+    # @example Note how the dates don't quite match. If we join them using `join_asof` and `strategy: "backward"`, then each date from `population` which doesn't have an exact match is matched with the closest earlier date from `gdp`:
+    #   population.join_asof(gdp, on: "date", strategy: "backward").collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────────┬────────────┬──────┐
+    #   # │ date       ┆ population ┆ gdp  │
+    #   # │ ---        ┆ ---        ┆ ---  │
+    #   # │ date       ┆ f64        ┆ i64  │
+    #   # ╞════════════╪════════════╪══════╡
+    #   # │ 2016-03-01 ┆ 82.19      ┆ 4164 │
+    #   # │ 2018-08-01 ┆ 82.66      ┆ 4566 │
+    #   # │ 2019-01-01 ┆ 83.12      ┆ 4696 │
+    #   # └────────────┴────────────┴──────┘
+    #
+    # @example
+    #   population.join_asof(
+    #     gdp, on: "date", strategy: "backward", coalesce: false
+    #   ).collect
+    #   # =>
+    #   # shape: (3, 4)
+    #   # ┌────────────┬────────────┬────────────┬──────┐
+    #   # │ date       ┆ population ┆ date_right ┆ gdp  │
+    #   # │ ---        ┆ ---        ┆ ---        ┆ ---  │
+    #   # │ date       ┆ f64        ┆ date       ┆ i64  │
+    #   # ╞════════════╪════════════╪════════════╪══════╡
+    #   # │ 2016-03-01 ┆ 82.19      ┆ 2016-01-01 ┆ 4164 │
+    #   # │ 2018-08-01 ┆ 82.66      ┆ 2018-01-01 ┆ 4566 │
+    #   # │ 2019-01-01 ┆ 83.12      ┆ 2019-01-01 ┆ 4696 │
+    #   # └────────────┴────────────┴────────────┴──────┘
+    #
+    # @example If we instead use `strategy: "forward"`, then each date from `population` which doesn't have an exact match is matched with the closest later date from `gdp`:
+    #   population.join_asof(gdp, on: "date", strategy: "forward").collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────────┬────────────┬──────┐
+    #   # │ date       ┆ population ┆ gdp  │
+    #   # │ ---        ┆ ---        ┆ ---  │
+    #   # │ date       ┆ f64        ┆ i64  │
+    #   # ╞════════════╪════════════╪══════╡
+    #   # │ 2016-03-01 ┆ 82.19      ┆ 4411 │
+    #   # │ 2018-08-01 ┆ 82.66      ┆ 4696 │
+    #   # │ 2019-01-01 ┆ 83.12      ┆ 4696 │
+    #   # └────────────┴────────────┴──────┘
+    #
+    # @example
+    #   population.join_asof(gdp, on: "date", strategy: "nearest").collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────────┬────────────┬──────┐
+    #   # │ date       ┆ population ┆ gdp  │
+    #   # │ ---        ┆ ---        ┆ ---  │
+    #   # │ date       ┆ f64        ┆ i64  │
+    #   # ╞════════════╪════════════╪══════╡
+    #   # │ 2016-03-01 ┆ 82.19      ┆ 4164 │
+    #   # │ 2018-08-01 ┆ 82.66      ┆ 4696 │
+    #   # │ 2019-01-01 ┆ 83.12      ┆ 4696 │
+    #   # └────────────┴────────────┴──────┘
+    #
+    # @example
+    #   gdp_dates = Polars.date_range(
+    #     Date.new(2016, 1, 1), Date.new(2020, 1, 1), "1y", eager: true
+    #   )
+    #   gdp2 = Polars::LazyFrame.new(
+    #     {
+    #       "country" => ["Germany"] * 5 + ["Netherlands"] * 5,
+    #       "date" => Polars.concat([gdp_dates, gdp_dates]),
+    #       "gdp" => [4164, 4411, 4566, 4696, 4827, 784, 833, 914, 910, 909]
+    #     }
+    #   ).sort("country", "date")
+    #   gdp2.collect
+    #   # =>
+    #   # shape: (10, 3)
+    #   # ┌─────────────┬────────────┬──────┐
+    #   # │ country     ┆ date       ┆ gdp  │
+    #   # │ ---         ┆ ---        ┆ ---  │
+    #   # │ str         ┆ date       ┆ i64  │
+    #   # ╞═════════════╪════════════╪══════╡
+    #   # │ Germany     ┆ 2016-01-01 ┆ 4164 │
+    #   # │ Germany     ┆ 2017-01-01 ┆ 4411 │
+    #   # │ Germany     ┆ 2018-01-01 ┆ 4566 │
+    #   # │ Germany     ┆ 2019-01-01 ┆ 4696 │
+    #   # │ Germany     ┆ 2020-01-01 ┆ 4827 │
+    #   # │ Netherlands ┆ 2016-01-01 ┆ 784  │
+    #   # │ Netherlands ┆ 2017-01-01 ┆ 833  │
+    #   # │ Netherlands ┆ 2018-01-01 ┆ 914  │
+    #   # │ Netherlands ┆ 2019-01-01 ┆ 910  │
+    #   # │ Netherlands ┆ 2020-01-01 ┆ 909  │
+    #   # └─────────────┴────────────┴──────┘
+    #
+    # @example
+    #   pop2 = Polars::LazyFrame.new(
+    #     {
+    #       "country" => ["Germany"] * 3 + ["Netherlands"] * 3,
+    #       "date" => [
+    #         Date.new(2016, 3, 1),
+    #         Date.new(2018, 8, 1),
+    #         Date.new(2019, 1, 1),
+    #         Date.new(2016, 3, 1),
+    #         Date.new(2018, 8, 1),
+    #         Date.new(2019, 1, 1)
+    #       ],
+    #       "population" => [82.19, 82.66, 83.12, 17.11, 17.32, 17.40]
+    #     }
+    #   ).sort("country", "date")
+    #   pop2.collect
+    #   # =>
+    #   # shape: (6, 3)
+    #   # ┌─────────────┬────────────┬────────────┐
+    #   # │ country     ┆ date       ┆ population │
+    #   # │ ---         ┆ ---        ┆ ---        │
+    #   # │ str         ┆ date       ┆ f64        │
+    #   # ╞═════════════╪════════════╪════════════╡
+    #   # │ Germany     ┆ 2016-03-01 ┆ 82.19      │
+    #   # │ Germany     ┆ 2018-08-01 ┆ 82.66      │
+    #   # │ Germany     ┆ 2019-01-01 ┆ 83.12      │
+    #   # │ Netherlands ┆ 2016-03-01 ┆ 17.11      │
+    #   # │ Netherlands ┆ 2018-08-01 ┆ 17.32      │
+    #   # │ Netherlands ┆ 2019-01-01 ┆ 17.4       │
+    #   # └─────────────┴────────────┴────────────┘
+    #
+    # @example
+    #   pop2.join_asof(gdp2, by: "country", on: "date", strategy: "nearest").collect
+    #   # =>
+    #   # shape: (6, 4)
+    #   # ┌─────────────┬────────────┬────────────┬──────┐
+    #   # │ country     ┆ date       ┆ population ┆ gdp  │
+    #   # │ ---         ┆ ---        ┆ ---        ┆ ---  │
+    #   # │ str         ┆ date       ┆ f64        ┆ i64  │
+    #   # ╞═════════════╪════════════╪════════════╪══════╡
+    #   # │ Germany     ┆ 2016-03-01 ┆ 82.19      ┆ 4164 │
+    #   # │ Germany     ┆ 2018-08-01 ┆ 82.66      ┆ 4696 │
+    #   # │ Germany     ┆ 2019-01-01 ┆ 83.12      ┆ 4696 │
+    #   # │ Netherlands ┆ 2016-03-01 ┆ 17.11      ┆ 784  │
+    #   # │ Netherlands ┆ 2018-08-01 ┆ 17.32      ┆ 910  │
+    #   # │ Netherlands ┆ 2019-01-01 ┆ 17.4       ┆ 910  │
+    #   # └─────────────┴────────────┴────────────┴──────┘
     def join_asof(
       other,
       left_on: nil,
@@ -1360,13 +1814,14 @@ module Polars
       suffix: "_right",
       tolerance: nil,
       allow_parallel: true,
-      force_parallel: false
+      force_parallel: false,
+      coalesce: true
     )
       if !other.is_a?(LazyFrame)
         raise ArgumentError, "Expected a `LazyFrame` as join table, got #{other.class.name}"
       end
 
-      if on.is_a?(String)
+      if on.is_a?(::String)
         left_on = on
         right_on = on
       end
@@ -1375,19 +1830,19 @@ module Polars
         raise ArgumentError, "You should pass the column to join on as an argument."
       end
 
-      if by_left.is_a?(String) || by_left.is_a?(Expr)
+      if by_left.is_a?(::String) || by_left.is_a?(Expr)
         by_left_ = [by_left]
       else
         by_left_ = by_left
       end
 
-      if by_right.is_a?(String) || by_right.is_a?(Expr)
+      if by_right.is_a?(::String) || by_right.is_a?(Expr)
         by_right_ = [by_right]
       else
         by_right_ = by_right
       end
 
-      if by.is_a?(String)
+      if by.is_a?(::String)
         by_left_ = [by]
         by_right_ = [by]
       elsif by.is_a?(::Array)
@@ -1397,7 +1852,7 @@ module Polars
 
       tolerance_str = nil
       tolerance_num = nil
-      if tolerance.is_a?(String)
+      if tolerance.is_a?(::String)
         tolerance_str = tolerance
       else
         tolerance_num = tolerance
@@ -1415,7 +1870,8 @@ module Polars
           suffix,
           strategy,
           tolerance_num,
-          tolerance_str
+          tolerance_str,
+          coalesce
         )
       )
     end
@@ -1431,16 +1887,30 @@ module Polars
     # @param on Object
     #   Join column of both DataFrames. If set, `left_on` and `right_on` should be
     #   None.
-    # @param how ["inner", "left", "outer", "semi", "anti", "cross"]
+    # @param how ["inner", "left", "full", "semi", "anti", "cross"]
     #   Join strategy.
     # @param suffix [String]
     #   Suffix to append to columns with a duplicate name.
+    # @param validate ['m:m', 'm:1', '1:m', '1:1']
+    #   Checks if join is of specified type.
+    #     * *many_to_many* - “m:m”: default, does not result in checks
+    #     * *one_to_one* - “1:1”: check if join keys are unique in both left and right datasets
+    #     * *one_to_many* - “1:m”: check if join keys are unique in left dataset
+    #     * *many_to_one* - “m:1”: check if join keys are unique in right dataset
+    # @param join_nulls [Boolean]
+    #   Join on null values. By default null values will never produce matches.
     # @param allow_parallel [Boolean]
     #   Allow the physical plan to optionally evaluate the computation of both
     #   DataFrames up to the join in parallel.
     # @param force_parallel [Boolean]
     #   Force the physical plan to evaluate the computation of both DataFrames up to
     #   the join in parallel.
+    # @param coalesce [Boolean]
+    #   Coalescing behavior (merging of join columns).
+    #     - nil: -> join specific.
+    #     - true: -> Always coalesce join columns.
+    #     - false: -> Never coalesce join columns.
+    #   Note that joining on any other expressions than `col` will turn off coalescing.
     #
     # @return [LazyFrame]
     #
@@ -1471,19 +1941,19 @@ module Polars
     #   # └─────┴─────┴─────┴───────┘
     #
     # @example
-    #   df.join(other_df, on: "ham", how: "outer").collect
+    #   df.join(other_df, on: "ham", how: "full").collect
     #   # =>
-    #   # shape: (4, 4)
-    #   # ┌──────┬──────┬─────┬───────┐
-    #   # │ foo  ┆ bar  ┆ ham ┆ apple │
-    #   # │ ---  ┆ ---  ┆ --- ┆ ---   │
-    #   # │ i64  ┆ f64  ┆ str ┆ str   │
-    #   # ╞══════╪══════╪═════╪═══════╡
-    #   # │ 1    ┆ 6.0  ┆ a   ┆ x     │
-    #   # │ 2    ┆ 7.0  ┆ b   ┆ y     │
-    #   # │ null ┆ null ┆ d   ┆ z     │
-    #   # │ 3    ┆ 8.0  ┆ c   ┆ null  │
-    #   # └──────┴──────┴─────┴───────┘
+    #   # shape: (4, 5)
+    #   # ┌──────┬──────┬──────┬───────┬───────────┐
+    #   # │ foo  ┆ bar  ┆ ham  ┆ apple ┆ ham_right │
+    #   # │ ---  ┆ ---  ┆ ---  ┆ ---   ┆ ---       │
+    #   # │ i64  ┆ f64  ┆ str  ┆ str   ┆ str       │
+    #   # ╞══════╪══════╪══════╪═══════╪═══════════╡
+    #   # │ 1    ┆ 6.0  ┆ a    ┆ x     ┆ a         │
+    #   # │ 2    ┆ 7.0  ┆ b    ┆ y     ┆ b         │
+    #   # │ null ┆ null ┆ null ┆ z     ┆ d         │
+    #   # │ 3    ┆ 8.0  ┆ c    ┆ null  ┆ null      │
+    #   # └──────┴──────┴──────┴───────┴───────────┘
     #
     # @example
     #   df.join(other_df, on: "ham", how: "left").collect
@@ -1530,28 +2000,33 @@ module Polars
       on: nil,
       how: "inner",
       suffix: "_right",
+      validate: "m:m",
+      join_nulls: false,
       allow_parallel: true,
-      force_parallel: false
+      force_parallel: false,
+      coalesce: nil
     )
       if !other.is_a?(LazyFrame)
         raise ArgumentError, "Expected a `LazyFrame` as join table, got #{other.class.name}"
       end
 
-      if how == "cross"
+      if how == "outer"
+        how = "full"
+      elsif how == "cross"
         return _from_rbldf(
           _ldf.join(
-            other._ldf, [], [], allow_parallel, force_parallel, how, suffix
+            other._ldf, [], [], allow_parallel, join_nulls, force_parallel, how, suffix, validate, coalesce
           )
         )
       end
 
       if !on.nil?
-        rbexprs = Utils.selection_to_rbexpr_list(on)
+        rbexprs = Utils.parse_into_list_of_expressions(on)
         rbexprs_left = rbexprs
         rbexprs_right = rbexprs
       elsif !left_on.nil? && !right_on.nil?
-        rbexprs_left = Utils.selection_to_rbexpr_list(left_on)
-        rbexprs_right = Utils.selection_to_rbexpr_list(right_on)
+        rbexprs_left = Utils.parse_into_list_of_expressions(left_on)
+        rbexprs_right = Utils.parse_into_list_of_expressions(right_on)
       else
         raise ArgumentError, "must specify `on` OR `left_on` and `right_on`"
       end
@@ -1563,8 +2038,11 @@ module Polars
           rbexprs_right,
           allow_parallel,
           force_parallel,
+          join_nulls,
           how,
           suffix,
+          validate,
+          coalesce
         )
       )
     end
@@ -1593,37 +2071,20 @@ module Polars
     #   ).collect
     #   # =>
     #   # shape: (4, 6)
-    #   # ┌─────┬──────┬───────┬──────┬──────┬───────┐
-    #   # │ a   ┆ b    ┆ c     ┆ a^2  ┆ b/2  ┆ not c │
-    #   # │ --- ┆ ---  ┆ ---   ┆ ---  ┆ ---  ┆ ---   │
-    #   # │ i64 ┆ f64  ┆ bool  ┆ f64  ┆ f64  ┆ bool  │
-    #   # ╞═════╪══════╪═══════╪══════╪══════╪═══════╡
-    #   # │ 1   ┆ 0.5  ┆ true  ┆ 1.0  ┆ 0.25 ┆ false │
-    #   # │ 2   ┆ 4.0  ┆ true  ┆ 4.0  ┆ 2.0  ┆ false │
-    #   # │ 3   ┆ 10.0 ┆ false ┆ 9.0  ┆ 5.0  ┆ true  │
-    #   # │ 4   ┆ 13.0 ┆ true  ┆ 16.0 ┆ 6.5  ┆ false │
-    #   # └─────┴──────┴───────┴──────┴──────┴───────┘
-    def with_columns(exprs)
-      exprs =
-        if exprs.nil?
-          []
-        elsif exprs.is_a?(Expr)
-          [exprs]
-        else
-          exprs.to_a
-        end
+    #   # ┌─────┬──────┬───────┬─────┬──────┬───────┐
+    #   # │ a   ┆ b    ┆ c     ┆ a^2 ┆ b/2  ┆ not c │
+    #   # │ --- ┆ ---  ┆ ---   ┆ --- ┆ ---  ┆ ---   │
+    #   # │ i64 ┆ f64  ┆ bool  ┆ i64 ┆ f64  ┆ bool  │
+    #   # ╞═════╪══════╪═══════╪═════╪══════╪═══════╡
+    #   # │ 1   ┆ 0.5  ┆ true  ┆ 1   ┆ 0.25 ┆ false │
+    #   # │ 2   ┆ 4.0  ┆ true  ┆ 4   ┆ 2.0  ┆ false │
+    #   # │ 3   ┆ 10.0 ┆ false ┆ 9   ┆ 5.0  ┆ true  │
+    #   # │ 4   ┆ 13.0 ┆ true  ┆ 16  ┆ 6.5  ┆ false │
+    #   # └─────┴──────┴───────┴─────┴──────┴───────┘
+    def with_columns(*exprs, **named_exprs)
+      structify = ENV.fetch("POLARS_AUTO_STRUCTIFY", "0") != "0"
 
-      rbexprs = []
-      exprs.each do |e|
-        case e
-        when Expr
-          rbexprs << e._rbexpr
-        when Series
-          rbexprs << Utils.lit(e)._rbexpr
-        else
-          raise ArgumentError, "Expected an expression, got #{e}"
-        end
-      end
+      rbexprs = Utils.parse_into_list_of_expressions(*exprs, **named_exprs, __structify: structify)
 
       _from_rbldf(_ldf.with_columns(rbexprs))
     end
@@ -1685,26 +2146,26 @@ module Polars
     #   # ┌─────┬─────┬───────────┐
     #   # │ a   ┆ b   ┆ b_squared │
     #   # │ --- ┆ --- ┆ ---       │
-    #   # │ i64 ┆ i64 ┆ f64       │
+    #   # │ i64 ┆ i64 ┆ i64       │
     #   # ╞═════╪═════╪═══════════╡
-    #   # │ 1   ┆ 2   ┆ 4.0       │
-    #   # │ 3   ┆ 4   ┆ 16.0      │
-    #   # │ 5   ┆ 6   ┆ 36.0      │
+    #   # │ 1   ┆ 2   ┆ 4         │
+    #   # │ 3   ┆ 4   ┆ 16        │
+    #   # │ 5   ┆ 6   ┆ 36        │
     #   # └─────┴─────┴───────────┘
     #
     # @example
     #   df.with_column(Polars.col("a") ** 2).collect
     #   # =>
     #   # shape: (3, 2)
-    #   # ┌──────┬─────┐
-    #   # │ a    ┆ b   │
-    #   # │ ---  ┆ --- │
-    #   # │ f64  ┆ i64 │
-    #   # ╞══════╪═════╡
-    #   # │ 1.0  ┆ 2   │
-    #   # │ 9.0  ┆ 4   │
-    #   # │ 25.0 ┆ 6   │
-    #   # └──────┴─────┘
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 2   │
+    #   # │ 9   ┆ 4   │
+    #   # │ 25  ┆ 6   │
+    #   # └─────┴─────┘
     def with_column(column)
       with_columns([column])
     end
@@ -1716,36 +2177,148 @@ module Polars
     #   - List of column names.
     #
     # @return [LazyFrame]
-    def drop(columns)
-      if columns.is_a?(String)
-        columns = [columns]
-      end
-      _from_rbldf(_ldf.drop_columns(columns))
+    #
+    # @example Drop a single column by passing the name of that column.
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6.0, 7.0, 8.0],
+    #       "ham" => ["a", "b", "c"]
+    #     }
+    #   )
+    #   lf.drop("ham").collect
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬─────┐
+    #   # │ foo ┆ bar │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ f64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 6.0 │
+    #   # │ 2   ┆ 7.0 │
+    #   # │ 3   ┆ 8.0 │
+    #   # └─────┴─────┘
+    #
+    # @example Drop multiple columns by passing a selector.
+    #   lf.drop(Polars.cs.numeric).collect
+    #   # =>
+    #   # shape: (3, 1)
+    #   # ┌─────┐
+    #   # │ ham │
+    #   # │ --- │
+    #   # │ str │
+    #   # ╞═════╡
+    #   # │ a   │
+    #   # │ b   │
+    #   # │ c   │
+    #   # └─────┘
+    #
+    # @example Use positional arguments to drop multiple columns.
+    #   lf.drop("foo", "ham").collect
+    #   # =>
+    #   # shape: (3, 1)
+    #   # ┌─────┐
+    #   # │ bar │
+    #   # │ --- │
+    #   # │ f64 │
+    #   # ╞═════╡
+    #   # │ 6.0 │
+    #   # │ 7.0 │
+    #   # │ 8.0 │
+    #   # └─────┘
+    def drop(*columns)
+      drop_cols = Utils._expand_selectors(self, *columns)
+      _from_rbldf(_ldf.drop(drop_cols))
     end
 
     # Rename column names.
     #
     # @param mapping [Hash]
     #   Key value pairs that map from old name to new name.
+    # @param strict [Boolean]
+    #   Validate that all column names exist in the current schema,
+    #   and throw an exception if any do not. (Note that this parameter
+    #   is a no-op when passing a function to `mapping`).
     #
     # @return [LazyFrame]
-    def rename(mapping)
-      existing = mapping.keys
-      _new = mapping.values
-      _from_rbldf(_ldf.rename(existing, _new))
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6, 7, 8],
+    #       "ham" => ["a", "b", "c"]
+    #     }
+    #   )
+    #   lf.rename({"foo" => "apple"}).collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌───────┬─────┬─────┐
+    #   # │ apple ┆ bar ┆ ham │
+    #   # │ ---   ┆ --- ┆ --- │
+    #   # │ i64   ┆ i64 ┆ str │
+    #   # ╞═══════╪═════╪═════╡
+    #   # │ 1     ┆ 6   ┆ a   │
+    #   # │ 2     ┆ 7   ┆ b   │
+    #   # │ 3     ┆ 8   ┆ c   │
+    #   # └───────┴─────┴─────┘
+    #
+    # @example
+    #   lf.rename(->(column_name) { "c" + column_name[1..] }).collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬─────┐
+    #   # │ coo ┆ car ┆ cam │
+    #   # │ --- ┆ --- ┆ --- │
+    #   # │ i64 ┆ i64 ┆ str │
+    #   # ╞═════╪═════╪═════╡
+    #   # │ 1   ┆ 6   ┆ a   │
+    #   # │ 2   ┆ 7   ┆ b   │
+    #   # │ 3   ┆ 8   ┆ c   │
+    #   # └─────┴─────┴─────┘
+    def rename(mapping, strict: true)
+      if mapping.respond_to?(:call)
+        select(F.all.name.map(&mapping))
+      else
+        existing = mapping.keys
+        _new = mapping.values
+        _from_rbldf(_ldf.rename(existing, _new, strict))
+      end
     end
 
     # Reverse the DataFrame.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "key" => ["a", "b", "c"],
+    #       "val" => [1, 2, 3]
+    #     }
+    #   )
+    #   lf.reverse.collect
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────┬─────┐
+    #   # │ key ┆ val │
+    #   # │ --- ┆ --- │
+    #   # │ str ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ c   ┆ 3   │
+    #   # │ b   ┆ 2   │
+    #   # │ a   ┆ 1   │
+    #   # └─────┴─────┘
     def reverse
       _from_rbldf(_ldf.reverse)
     end
 
     # Shift the values by a given period.
     #
-    # @param periods [Integer]
+    # @param n [Integer]
     #   Number of places to shift (may be negative).
+    # @param fill_value [Object]
+    #   Fill the resulting null values with this value.
     #
     # @return [LazyFrame]
     #
@@ -1782,8 +2355,12 @@ module Polars
     #   # │ 5    ┆ 6    │
     #   # │ null ┆ null │
     #   # └──────┴──────┘
-    def shift(periods)
-      _from_rbldf(_ldf.shift(periods))
+    def shift(n, fill_value: nil)
+      if !fill_value.nil?
+        fill_value = Utils.parse_into_expression(fill_value, str_as_lit: true)
+      end
+      n = Utils.parse_into_expression(n)
+      _from_rbldf(_ldf.shift(n, fill_value))
     end
 
     # Shift the values by a given period and fill the resulting null values.
@@ -1829,10 +2406,7 @@ module Polars
     #   # │ 0   ┆ 0   │
     #   # └─────┴─────┘
     def shift_and_fill(periods, fill_value)
-      if !fill_value.is_a?(Expr)
-        fill_value = Polars.lit(fill_value)
-      end
-      _from_rbldf(_ldf.shift_and_fill(periods, fill_value._rbexpr))
+      shift(periods, fill_value: fill_value)
     end
 
     # Get a slice of this DataFrame.
@@ -1884,8 +2458,43 @@ module Polars
     #   Consider using the {#fetch} operation if you only want to test your
     #   query. The {#fetch} operation will load the first `n` rows at the scan
     #   level, whereas the {#head}/{#limit} are applied at the end.
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "a" => [1, 2, 3, 4, 5, 6],
+    #       "b" => [7, 8, 9, 10, 11, 12]
+    #     }
+    #   )
+    #   lf.limit.collect
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 7   │
+    #   # │ 2   ┆ 8   │
+    #   # │ 3   ┆ 9   │
+    #   # │ 4   ┆ 10  │
+    #   # │ 5   ┆ 11  │
+    #   # └─────┴─────┘
+    #
+    # @example
+    #   lf.limit(2).collect
+    #   # =>
+    #   # shape: (2, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 7   │
+    #   # │ 2   ┆ 8   │
+    #   # └─────┴─────┘
     def limit(n = 5)
-      head(5)
+      head(n)
     end
 
     # Get the first `n` rows.
@@ -1899,6 +2508,41 @@ module Polars
     #   Consider using the {#fetch} operation if you only want to test your
     #   query. The {#fetch} operation will load the first `n` rows at the scan
     #   level, whereas the {#head}/{#limit} are applied at the end.
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "a" => [1, 2, 3, 4, 5, 6],
+    #       "b" => [7, 8, 9, 10, 11, 12]
+    #     }
+    #   )
+    #   lf.head.collect
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 7   │
+    #   # │ 2   ┆ 8   │
+    #   # │ 3   ┆ 9   │
+    #   # │ 4   ┆ 10  │
+    #   # │ 5   ┆ 11  │
+    #   # └─────┴─────┘
+    #
+    # @example
+    #   lf.head(2).collect
+    #   # =>
+    #   # shape: (2, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 7   │
+    #   # │ 2   ┆ 8   │
+    #   # └─────┴─────┘
     def head(n = 5)
       slice(0, n)
     end
@@ -1909,6 +2553,41 @@ module Polars
     #     Number of rows.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "a" => [1, 2, 3, 4, 5, 6],
+    #       "b" => [7, 8, 9, 10, 11, 12]
+    #     }
+    #   )
+    #   lf.tail.collect
+    #   # =>
+    #   # shape: (5, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 2   ┆ 8   │
+    #   # │ 3   ┆ 9   │
+    #   # │ 4   ┆ 10  │
+    #   # │ 5   ┆ 11  │
+    #   # │ 6   ┆ 12  │
+    #   # └─────┴─────┘
+    #
+    # @example
+    #   lf.tail(2).collect
+    #   # =>
+    #   # shape: (2, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 5   ┆ 11  │
+    #   # │ 6   ┆ 12  │
+    #   # └─────┴─────┘
     def tail(n = 5)
       _from_rbldf(_ldf.tail(n))
     end
@@ -1916,6 +2595,24 @@ module Polars
     # Get the last row of the DataFrame.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "a" => [1, 5, 3],
+    #       "b" => [2, 4, 6]
+    #     }
+    #   )
+    #   lf.last.collect
+    #   # =>
+    #   # shape: (1, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 3   ┆ 6   │
+    #   # └─────┴─────┘
     def last
       tail(1)
     end
@@ -1923,6 +2620,24 @@ module Polars
     # Get the first row of the DataFrame.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "a" => [1, 5, 3],
+    #       "b" => [2, 4, 6]
+    #     }
+    #   )
+    #   lf.first.collect
+    #   # =>
+    #   # shape: (1, 2)
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 2   │
+    #   # └─────┴─────┘
     def first
       slice(0, 1)
     end
@@ -1947,21 +2662,22 @@ module Polars
     #       "b" => [2, 4, 6]
     #     }
     #   ).lazy
-    #   df.with_row_count.collect
+    #   df.with_row_index.collect
     #   # =>
     #   # shape: (3, 3)
-    #   # ┌────────┬─────┬─────┐
-    #   # │ row_nr ┆ a   ┆ b   │
-    #   # │ ---    ┆ --- ┆ --- │
-    #   # │ u32    ┆ i64 ┆ i64 │
-    #   # ╞════════╪═════╪═════╡
-    #   # │ 0      ┆ 1   ┆ 2   │
-    #   # │ 1      ┆ 3   ┆ 4   │
-    #   # │ 2      ┆ 5   ┆ 6   │
-    #   # └────────┴─────┴─────┘
-    def with_row_count(name: "row_nr", offset: 0)
-      _from_rbldf(_ldf.with_row_count(name, offset))
+    #   # ┌───────┬─────┬─────┐
+    #   # │ index ┆ a   ┆ b   │
+    #   # │ ---   ┆ --- ┆ --- │
+    #   # │ u32   ┆ i64 ┆ i64 │
+    #   # ╞═══════╪═════╪═════╡
+    #   # │ 0     ┆ 1   ┆ 2   │
+    #   # │ 1     ┆ 3   ┆ 4   │
+    #   # │ 2     ┆ 5   ┆ 6   │
+    #   # └───────┴─────┴─────┘
+    def with_row_index(name: "index", offset: 0)
+      _from_rbldf(_ldf.with_row_index(name, offset))
     end
+    alias_method :with_row_count, :with_row_index
 
     # Take every nth row in the LazyFrame and return as a new LazyFrame.
     #
@@ -1981,12 +2697,78 @@ module Polars
     #   # │ 3   ┆ 7   │
     #   # └─────┴─────┘
     def take_every(n)
-      select(Utils.col("*").take_every(n))
+      select(F.col("*").take_every(n))
     end
 
     # Fill null values using the specified value or strategy.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "a" => [1, 2, nil, 4],
+    #       "b" => [0.5, 4, nil, 13]
+    #     }
+    #   )
+    #   lf.fill_null(99).collect
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────┐
+    #   # │ a   ┆ b    │
+    #   # │ --- ┆ ---  │
+    #   # │ i64 ┆ f64  │
+    #   # ╞═════╪══════╡
+    #   # │ 1   ┆ 0.5  │
+    #   # │ 2   ┆ 4.0  │
+    #   # │ 99  ┆ 99.0 │
+    #   # │ 4   ┆ 13.0 │
+    #   # └─────┴──────┘
+    #
+    # @example
+    #   lf.fill_null(strategy: "forward").collect
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────┐
+    #   # │ a   ┆ b    │
+    #   # │ --- ┆ ---  │
+    #   # │ i64 ┆ f64  │
+    #   # ╞═════╪══════╡
+    #   # │ 1   ┆ 0.5  │
+    #   # │ 2   ┆ 4.0  │
+    #   # │ 2   ┆ 4.0  │
+    #   # │ 4   ┆ 13.0 │
+    #   # └─────┴──────┘
+    #
+    # @example
+    #   lf.fill_null(strategy: "max").collect
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────┐
+    #   # │ a   ┆ b    │
+    #   # │ --- ┆ ---  │
+    #   # │ i64 ┆ f64  │
+    #   # ╞═════╪══════╡
+    #   # │ 1   ┆ 0.5  │
+    #   # │ 2   ┆ 4.0  │
+    #   # │ 4   ┆ 13.0 │
+    #   # │ 4   ┆ 13.0 │
+    #   # └─────┴──────┘
+    #
+    # @example
+    #   lf.fill_null(strategy: "zero").collect
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌─────┬──────┐
+    #   # │ a   ┆ b    │
+    #   # │ --- ┆ ---  │
+    #   # │ i64 ┆ f64  │
+    #   # ╞═════╪══════╡
+    #   # │ 1   ┆ 0.5  │
+    #   # │ 2   ┆ 4.0  │
+    #   # │ 0   ┆ 0.0  │
+    #   # │ 4   ┆ 13.0 │
+    #   # └─────┴──────┘
     def fill_null(value = nil, strategy: nil, limit: nil, matches_supertype: nil)
       select(Polars.all.fill_null(value, strategy: strategy, limit: limit))
     end
@@ -2024,7 +2806,7 @@ module Polars
     #   # └──────┴──────┘
     def fill_nan(fill_value)
       if !fill_value.is_a?(Expr)
-        fill_value = Utils.lit(fill_value)
+        fill_value = F.lit(fill_value)
       end
       _from_rbldf(_ldf.fill_nan(fill_value._rbexpr))
     end
@@ -2215,8 +2997,8 @@ module Polars
     #   # │ 3.0 ┆ 1.0 │
     #   # └─────┴─────┘
     def quantile(quantile, interpolation: "nearest")
-      quantile = Utils.expr_to_lit_or_expr(quantile, str_to_lit: false)
-      _from_rbldf(_ldf.quantile(quantile._rbexpr, interpolation))
+      quantile = Utils.parse_into_expression(quantile, str_as_lit: false)
+      _from_rbldf(_ldf.quantile(quantile, interpolation))
     end
 
     # Explode lists to long format.
@@ -2248,7 +3030,7 @@ module Polars
     #   # │ c       ┆ 8       │
     #   # └─────────┴─────────┘
     def explode(columns)
-      columns = Utils.selection_to_rbexpr_list(columns)
+      columns = Utils.parse_into_list_of_expressions(columns)
       _from_rbldf(_ldf.explode(columns))
     end
 
@@ -2266,6 +3048,53 @@ module Polars
     #   Which of the duplicate rows to keep.
     #
     # @return [LazyFrame]
+    #
+    # @example
+    #   lf = Polars::LazyFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3, 1],
+    #       "bar" => ["a", "a", "a", "a"],
+    #       "ham" => ["b", "b", "b", "b"]
+    #     }
+    #   )
+    #   lf.unique(maintain_order: true).collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬─────┐
+    #   # │ foo ┆ bar ┆ ham │
+    #   # │ --- ┆ --- ┆ --- │
+    #   # │ i64 ┆ str ┆ str │
+    #   # ╞═════╪═════╪═════╡
+    #   # │ 1   ┆ a   ┆ b   │
+    #   # │ 2   ┆ a   ┆ b   │
+    #   # │ 3   ┆ a   ┆ b   │
+    #   # └─────┴─────┴─────┘
+    #
+    # @example
+    #   lf.unique(subset: ["bar", "ham"], maintain_order: true).collect
+    #   # =>
+    #   # shape: (1, 3)
+    #   # ┌─────┬─────┬─────┐
+    #   # │ foo ┆ bar ┆ ham │
+    #   # │ --- ┆ --- ┆ --- │
+    #   # │ i64 ┆ str ┆ str │
+    #   # ╞═════╪═════╪═════╡
+    #   # │ 1   ┆ a   ┆ b   │
+    #   # └─────┴─────┴─────┘
+    #
+    # @example
+    #   lf.unique(keep: "last", maintain_order: true).collect
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬─────┐
+    #   # │ foo ┆ bar ┆ ham │
+    #   # │ --- ┆ --- ┆ --- │
+    #   # │ i64 ┆ str ┆ str │
+    #   # ╞═════╪═════╪═════╡
+    #   # │ 2   ┆ a   ┆ b   │
+    #   # │ 3   ┆ a   ┆ b   │
+    #   # │ 1   ┆ a   ┆ b   │
+    #   # └─────┴─────┴─────┘
     def unique(maintain_order: true, subset: nil, keep: "first")
       if !subset.nil? && !subset.is_a?(::Array)
         subset = [subset]
@@ -2311,35 +3140,35 @@ module Polars
     # Optionally leaves identifiers set.
     #
     # This function is useful to massage a DataFrame into a format where one or more
-    # columns are identifier variables (id_vars), while all other columns, considered
-    # measured variables (value_vars), are "unpivoted" to the row axis, leaving just
+    # columns are identifier variables (index) while all other columns, considered
+    # measured variables (on), are "unpivoted" to the row axis leaving just
     # two non-identifier columns, 'variable' and 'value'.
     #
-    # @param id_vars [Object]
-    #   Columns to use as identifier variables.
-    # @param value_vars [Object]
-    #   Values to use as identifier variables.
-    #   If `value_vars` is empty all columns that are not in `id_vars` will be used.
+    # @param on [Object]
+    #   Column(s) or selector(s) to use as values variables; if `on`
+    #   is empty all columns that are not in `index` will be used.
+    # @param index [Object]
+    #   Column(s) or selector(s) to use as identifier variables.
     # @param variable_name [String]
-    #   Name to give to the `value` column. Defaults to "variable"
+    #   Name to give to the `variable` column. Defaults to "variable"
     # @param value_name [String]
     #   Name to give to the `value` column. Defaults to "value"
     # @param streamable [Boolean]
     #   Allow this node to run in the streaming engine.
-    #   If this runs in streaming, the output of the melt operation
+    #   If this runs in streaming, the output of the unpivot operation
     #   will not have a stable ordering.
     #
     # @return [LazyFrame]
     #
     # @example
-    #   df = Polars::DataFrame.new(
+    #   lf = Polars::LazyFrame.new(
     #     {
     #       "a" => ["x", "y", "z"],
     #       "b" => [1, 3, 5],
     #       "c" => [2, 4, 6]
     #     }
-    #   ).lazy
-    #   df.melt(id_vars: "a", value_vars: ["b", "c"]).collect
+    #   )
+    #   lf.unpivot(Polars.cs.numeric, index: "a").collect
     #   # =>
     #   # shape: (6, 3)
     #   # ┌─────┬──────────┬───────┐
@@ -2354,23 +3183,25 @@ module Polars
     #   # │ y   ┆ c        ┆ 4     │
     #   # │ z   ┆ c        ┆ 6     │
     #   # └─────┴──────────┴───────┘
-    def melt(id_vars: nil, value_vars: nil, variable_name: nil, value_name: nil, streamable: true)
-      if value_vars.is_a?(String)
-        value_vars = [value_vars]
+    def unpivot(
+      on,
+      index: nil,
+      variable_name: nil,
+      value_name: nil,
+      streamable: true
+    )
+      if !streamable
+        warn "The `streamable` parameter for `LazyFrame.unpivot` is deprecated"
       end
-      if id_vars.is_a?(String)
-        id_vars = [id_vars]
-      end
-      if value_vars.nil?
-        value_vars = []
-      end
-      if id_vars.nil?
-        id_vars = []
-      end
+
+      on = on.nil? ? [] : Utils.parse_into_list_of_expressions(on)
+      index = index.nil? ? [] : Utils.parse_into_list_of_expressions(index)
+
       _from_rbldf(
-        _ldf.melt(id_vars, value_vars, value_name, variable_name, streamable)
+        _ldf.unpivot(on, index, value_name, variable_name)
       )
     end
+    alias_method :melt, :unpivot
 
     # def map
     # end
@@ -2401,7 +3232,7 @@ module Polars
     #   # │ 10.0 ┆ null ┆ 9.0      │
     #   # └──────┴──────┴──────────┘
     def interpolate
-      select(Utils.col("*").interpolate)
+      select(F.col("*").interpolate)
     end
 
     # Decompose a struct into its fields.
@@ -2456,38 +3287,71 @@ module Polars
     #   # │ bar    ┆ 2   ┆ b   ┆ null ┆ [3]       ┆ womp  │
     #   # └────────┴─────┴─────┴──────┴───────────┴───────┘
     def unnest(names)
-      if names.is_a?(String)
+      if names.is_a?(::String)
         names = [names]
       end
       _from_rbldf(_ldf.unnest(names))
     end
 
-    # TODO
-    # def merge_sorted
-    # end
+    # Take two sorted DataFrames and merge them by the sorted key.
+    #
+    # The output of this operation will also be sorted.
+    # It is the callers responsibility that the frames are sorted
+    # by that key otherwise the output will not make sense.
+    #
+    # The schemas of both LazyFrames must be equal.
+    #
+    # @param other [DataFrame]
+    #   Other DataFrame that must be merged
+    # @param key [String]
+    #   Key that is sorted.
+    #
+    # @return [LazyFrame]
+    #
+    # @example
+    #   df0 = Polars::LazyFrame.new(
+    #     {"name" => ["steve", "elise", "bob"], "age" => [42, 44, 18]}
+    #   ).sort("age")
+    #   df1 = Polars::LazyFrame.new(
+    #     {"name" => ["anna", "megan", "steve", "thomas"], "age" => [21, 33, 42, 20]}
+    #   ).sort("age")
+    #   df0.merge_sorted(df1, "age").collect
+    #   # =>
+    #   # shape: (7, 2)
+    #   # ┌────────┬─────┐
+    #   # │ name   ┆ age │
+    #   # │ ---    ┆ --- │
+    #   # │ str    ┆ i64 │
+    #   # ╞════════╪═════╡
+    #   # │ bob    ┆ 18  │
+    #   # │ thomas ┆ 20  │
+    #   # │ anna   ┆ 21  │
+    #   # │ megan  ┆ 33  │
+    #   # │ steve  ┆ 42  │
+    #   # │ steve  ┆ 42  │
+    #   # │ elise  ┆ 44  │
+    #   # └────────┴─────┘
+    def merge_sorted(other, key)
+      _from_rbldf(_ldf.merge_sorted(other._ldf, key))
+    end
 
     # Indicate that one or multiple columns are sorted.
     #
     # @param column [Object]
     #   Columns that are sorted
-    # @param more_columns [Object]
-    #   Additional columns that are sorted, specified as positional arguments.
     # @param descending [Boolean]
     #   Whether the columns are sorted in descending order.
     #
     # @return [LazyFrame]
     def set_sorted(
       column,
-      *more_columns,
       descending: false
     )
-      columns = Utils.selection_to_rbexpr_list(column)
-      if more_columns.any?
-        columns.concat(Utils.selection_to_rbexpr_list(more_columns))
+      if !Utils.strlike?(column)
+        msg = "expected a 'str' for argument 'column' in 'set_sorted'"
+        raise TypeError, msg
       end
-      with_columns(
-        columns.map { |e| Utils.wrap_expr(e).set_sorted(descending: descending) }
-      )
+      with_columns(F.col(column).set_sorted(descending: descending))
     end
 
     # TODO

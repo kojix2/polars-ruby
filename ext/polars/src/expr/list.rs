@@ -1,4 +1,4 @@
-use magnus::Value;
+use magnus::{prelude::*, value::Opaque, Ruby, Value};
 use polars::lazy::dsl::lit;
 use polars::prelude::*;
 use polars::series::ops::NullBehavior;
@@ -7,6 +7,14 @@ use crate::conversion::Wrap;
 use crate::{RbExpr, RbResult};
 
 impl RbExpr {
+    pub fn list_all(&self) -> Self {
+        self.inner.clone().list().all().into()
+    }
+
+    pub fn list_any(&self) -> Self {
+        self.inner.clone().list().any().into()
+    }
+
     pub fn list_arg_max(&self) -> Self {
         self.inner.clone().list().arg_max().into()
     }
@@ -43,15 +51,19 @@ impl RbExpr {
             .into()
     }
 
-    pub fn list_get(&self, index: &RbExpr) -> Self {
-        self.inner.clone().list().get(index.inner.clone()).into()
-    }
-
-    pub fn list_join(&self, separator: &RbExpr) -> Self {
+    pub fn list_get(&self, index: &RbExpr, null_on_oob: bool) -> Self {
         self.inner
             .clone()
             .list()
-            .join(separator.inner.clone())
+            .get(index.inner.clone(), null_on_oob)
+            .into()
+    }
+
+    pub fn list_join(&self, separator: &RbExpr, ignore_nulls: bool) -> Self {
+        self.inner
+            .clone()
+            .list()
+            .join(separator.inner.clone(), ignore_nulls)
             .into()
     }
 
@@ -100,6 +112,10 @@ impl RbExpr {
             .into()
     }
 
+    pub fn list_tail(&self, n: &RbExpr) -> Self {
+        self.inner.clone().list().tail(n.inner.clone()).into()
+    }
+
     pub fn list_sort(&self, reverse: bool) -> Self {
         self.inner
             .clone()
@@ -116,34 +132,77 @@ impl RbExpr {
         self.inner.clone().list().sum().with_fmt("list.sum").into()
     }
 
-    pub fn list_take(&self, index: &RbExpr, null_on_oob: bool) -> Self {
+    pub fn list_drop_nulls(&self) -> Self {
+        self.inner.clone().list().drop_nulls().into()
+    }
+
+    pub fn list_sample_n(
+        &self,
+        n: &RbExpr,
+        with_replacement: bool,
+        shuffle: bool,
+        seed: Option<u64>,
+    ) -> Self {
         self.inner
             .clone()
             .list()
-            .take(index.inner.clone(), null_on_oob)
+            .sample_n(n.inner.clone(), with_replacement, shuffle, seed)
             .into()
+    }
+
+    pub fn list_sample_fraction(
+        &self,
+        fraction: &RbExpr,
+        with_replacement: bool,
+        shuffle: bool,
+        seed: Option<u64>,
+    ) -> Self {
+        self.inner
+            .clone()
+            .list()
+            .sample_fraction(fraction.inner.clone(), with_replacement, shuffle, seed)
+            .into()
+    }
+
+    pub fn list_gather(&self, index: &RbExpr, null_on_oob: bool) -> Self {
+        self.inner
+            .clone()
+            .list()
+            .gather(index.inner.clone(), null_on_oob)
+            .into()
+    }
+
+    pub fn list_to_array(&self, width: usize) -> Self {
+        self.inner.clone().list().to_array(width).into()
     }
 
     pub fn list_to_struct(
         &self,
         width_strat: Wrap<ListToStructWidthStrategy>,
-        _name_gen: Option<Value>,
+        name_gen: Option<Value>,
         upper_bound: usize,
     ) -> RbResult<Self> {
-        // TODO fix
-        let name_gen = None;
-        // let name_gen = name_gen.map(|lambda| {
-        //     Arc::new(move |idx: usize| {
-        //         let out: Value = lambda.funcall("call", (idx,)).unwrap();
-        //         String::try_convert(out).unwrap()
-        //     }) as NameGenerator
-        // });
+        let name_gen = name_gen.map(|lambda| {
+            let lambda = Opaque::from(lambda);
+            Arc::new(move |idx: usize| {
+                let lambda = Ruby::get().unwrap().get_inner(lambda);
+                let out: String = lambda.funcall("call", (idx,)).unwrap();
+                PlSmallStr::from_string(out)
+            });
+
+            // non-Ruby thread
+            todo!();
+        });
 
         Ok(self
             .inner
             .clone()
             .list()
-            .to_struct(width_strat.0, name_gen, upper_bound)
+            .to_struct(ListToStructArgs::InferWidth {
+                infer_field_strategy: width_strat.0,
+                get_index_name: name_gen,
+                max_fields: upper_bound,
+            })
             .into())
     }
 

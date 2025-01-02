@@ -1,23 +1,19 @@
-use magnus::{prelude::*, RArray, Value};
-use polars::io::mmap::MmapBytesReader;
-use polars::io::RowCount;
-use polars::prelude::read_impl::OwnedBatchedCsvReader;
-use polars::prelude::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+use magnus::{prelude::*, RArray, Value};
+use polars::io::csv::read::OwnedBatchedCsvReader;
+use polars::io::mmap::MmapBytesReader;
+use polars::io::RowIndex;
+use polars::prelude::*;
 
 use crate::conversion::*;
-use crate::prelude::read_impl::OwnedBatchedCsvReaderMmap;
 use crate::{RbDataFrame, RbPolarsErr, RbResult};
-
-pub enum BatchedReader {
-    MMap(OwnedBatchedCsvReaderMmap),
-    Read(OwnedBatchedCsvReader),
-}
 
 #[magnus::wrap(class = "Polars::RbBatchedCsv")]
 pub struct RbBatchedCsv {
-    pub reader: RefCell<BatchedReader>,
+    pub reader: RefCell<Mutex<OwnedBatchedCsvReader>>,
 }
 
 impl RbBatchedCsv {
@@ -38,25 +34,27 @@ impl RbBatchedCsv {
         let n_threads = Option::<usize>::try_convert(arguments[11])?;
         let path = PathBuf::try_convert(arguments[12])?;
         let overwrite_dtype = Option::<Vec<(String, Wrap<DataType>)>>::try_convert(arguments[13])?;
-        // TODO fix
-        let overwrite_dtype_slice = Option::<Vec<Wrap<DataType>>>::None; // Option::<Vec<Wrap<DataType>>>::try_convert(arguments[14])?;
+        let overwrite_dtype_slice = Option::<Vec<Wrap<DataType>>>::try_convert(arguments[14])?;
         let low_memory = bool::try_convert(arguments[15])?;
-        let comment_char = Option::<String>::try_convert(arguments[16])?;
+        let comment_prefix = Option::<String>::try_convert(arguments[16])?;
         let quote_char = Option::<String>::try_convert(arguments[17])?;
         let null_values = Option::<Wrap<NullValues>>::try_convert(arguments[18])?;
-        let try_parse_dates = bool::try_convert(arguments[19])?;
-        let skip_rows_after_header = usize::try_convert(arguments[20])?;
-        let row_count = Option::<(String, IdxSize)>::try_convert(arguments[21])?;
-        let sample_size = usize::try_convert(arguments[22])?;
+        let missing_utf8_is_empty_string = bool::try_convert(arguments[19])?;
+        let try_parse_dates = bool::try_convert(arguments[20])?;
+        let skip_rows_after_header = usize::try_convert(arguments[21])?;
+        let row_index = Option::<(String, IdxSize)>::try_convert(arguments[22])?;
         let eol_char = String::try_convert(arguments[23])?;
+        let raise_if_empty = bool::try_convert(arguments[24])?;
+        let truncate_ragged_lines = bool::try_convert(arguments[25])?;
+        let decimal_comma = bool::try_convert(arguments[26])?;
         // end arguments
 
         let null_values = null_values.map(|w| w.0);
-        let comment_char = comment_char.map(|s| s.as_bytes()[0]);
         let eol_char = eol_char.as_bytes()[0];
-
-        let row_count = row_count.map(|(name, offset)| RowCount { name, offset });
-
+        let row_index = row_index.map(|(name, offset)| RowIndex {
+            name: name.into(),
+            offset,
+        });
         let quote_char = if let Some(s) = quote_char {
             if s.is_empty() {
                 None
@@ -72,7 +70,7 @@ impl RbBatchedCsv {
                 .iter()
                 .map(|(name, dtype)| {
                     let dtype = dtype.0.clone();
-                    Field::new(name, dtype)
+                    Field::new((&**name).into(), dtype)
                 })
                 .collect::<Schema>()
         });
@@ -84,55 +82,56 @@ impl RbBatchedCsv {
                 .collect::<Vec<_>>()
         });
 
-        let file = std::fs::File::open(path).map_err(RbPolarsErr::io)?;
+        let file = std::fs::File::open(path).map_err(RbPolarsErr::from)?;
         let reader = Box::new(file) as Box<dyn MmapBytesReader>;
-        let reader = CsvReader::new(reader)
-            .infer_schema(infer_schema_length)
-            .has_header(has_header)
+        let reader = CsvReadOptions::default()
+            .with_infer_schema_length(infer_schema_length)
+            .with_has_header(has_header)
             .with_n_rows(n_rows)
-            .with_separator(separator.as_bytes()[0])
             .with_skip_rows(skip_rows)
             .with_ignore_errors(ignore_errors)
-            .with_projection(projection)
+            .with_projection(projection.map(Arc::new))
             .with_rechunk(rechunk)
             .with_chunk_size(chunk_size)
-            .with_encoding(encoding.0)
-            .with_columns(columns)
+            .with_columns(columns.map(|x| x.into_iter().map(PlSmallStr::from_string).collect()))
             .with_n_threads(n_threads)
-            .with_dtypes_slice(overwrite_dtype_slice.as_deref())
-            .low_memory(low_memory)
-            .with_comment_char(comment_char)
-            .with_null_values(null_values)
-            .with_try_parse_dates(try_parse_dates)
-            .with_quote_char(quote_char)
-            .with_end_of_line_char(eol_char)
+            .with_dtype_overwrite(overwrite_dtype_slice.map(Arc::new))
+            .with_low_memory(low_memory)
             .with_skip_rows_after_header(skip_rows_after_header)
-            .with_row_count(row_count)
-            .sample_size(sample_size);
+            .with_row_index(row_index)
+            .with_raise_if_empty(raise_if_empty)
+            .with_parse_options(
+                CsvParseOptions::default()
+                    .with_separator(separator.as_bytes()[0])
+                    .with_encoding(encoding.0)
+                    .with_missing_is_null(!missing_utf8_is_empty_string)
+                    .with_comment_prefix(comment_prefix.as_deref())
+                    .with_null_values(null_values)
+                    .with_try_parse_dates(try_parse_dates)
+                    .with_quote_char(quote_char)
+                    .with_eol_char(eol_char)
+                    .with_truncate_ragged_lines(truncate_ragged_lines)
+                    .with_decimal_comma(decimal_comma),
+            )
+            .into_reader_with_file_handle(reader);
 
-        let reader = if low_memory {
-            let reader = reader
-                .batched_read(overwrite_dtype.map(Arc::new))
-                .map_err(RbPolarsErr::from)?;
-            BatchedReader::Read(reader)
-        } else {
-            let reader = reader
-                .batched_mmap(overwrite_dtype.map(Arc::new))
-                .map_err(RbPolarsErr::from)?;
-            BatchedReader::MMap(reader)
-        };
+        let reader = reader
+            .batched(overwrite_dtype.map(Arc::new))
+            .map_err(RbPolarsErr::from)?;
 
         Ok(RbBatchedCsv {
-            reader: RefCell::new(reader),
+            reader: RefCell::new(Mutex::new(reader)),
         })
     }
 
     pub fn next_batches(&self, n: usize) -> RbResult<Option<RArray>> {
-        let batches = match &mut *self.reader.borrow_mut() {
-            BatchedReader::MMap(reader) => reader.next_batches(n),
-            BatchedReader::Read(reader) => reader.next_batches(n),
-        }
-        .map_err(RbPolarsErr::from)?;
+        let reader = &self.reader;
+        let batches = reader
+            .borrow()
+            .lock()
+            .map_err(|e| RbPolarsErr::Other(e.to_string()))?
+            .next_batches(n)
+            .map_err(RbPolarsErr::from)?;
 
         Ok(batches.map(|batches| RArray::from_iter(batches.into_iter().map(RbDataFrame::from))))
     }

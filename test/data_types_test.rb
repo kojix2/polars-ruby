@@ -8,12 +8,6 @@ class DataTypesTest < Minitest::Test
     assert_equal Polars::Duration, Polars::Duration.new("ns").base_type
   end
 
-  def test_is_nested
-    refute Polars::Int64.nested?
-    assert Polars::List.nested?
-    assert Polars::List.new(Polars::Int64).nested?
-  end
-
   def test_to_s
     assert_equal "Polars::Int64", Polars::Int64.to_s
     assert_equal "Polars::Decimal", Polars::Decimal.to_s
@@ -22,8 +16,8 @@ class DataTypesTest < Minitest::Test
     assert_equal %!Polars::Duration(time_unit: "ns")!, Polars::Duration.new("ns").to_s
     assert_equal "Polars::List", Polars::List.to_s
     assert_equal "Polars::List(Polars::Int64)", Polars::List.new(Polars::Int64).to_s
-    assert_equal "Polars::Array(Polars::Int64)", Polars::Array.new(3, Polars::Int64).to_s
-    assert_equal %!Polars::Struct([Polars::Field("a", Polars::Int64)])!, Polars::Struct.new([Polars::Field.new("a", Polars::Int64)]).to_s
+    assert_equal "Polars::Array(Polars::Int64, width: 3)", Polars::Array.new(3, Polars::Int64).to_s
+    assert_equal %!Polars::Struct({"a"=>Polars::Int64})!, Polars::Struct.new([Polars::Field.new("a", Polars::Int64)]).to_s.gsub(" => ", "=>")
   end
 
   def test_equal_int
@@ -79,5 +73,59 @@ class DataTypesTest < Minitest::Test
     assert_equal Polars::Struct.new([Polars::Field.new("a", Polars::Int64)]), Polars::Struct.new([Polars::Field.new("a", Polars::Int64)])
     refute_equal Polars::Struct.new([Polars::Field.new("a", Polars::Int64)]), Polars::Struct.new([Polars::Field.new("b", Polars::Int64)])
     refute_equal Polars::Struct.new([Polars::Field.new("a", Polars::Int64)]), Polars::Struct.new([Polars::Field.new("a", Polars::Int32)])
+  end
+
+  def test_is_numeric
+    assert Polars::Int64.numeric?
+    assert Polars::Float64.numeric?
+    refute Polars::String.numeric?
+  end
+
+  def test_is_decimal
+    assert Polars::Decimal.decimal?
+    assert Polars::Decimal.new(15, 1).decimal?
+    refute Polars::String.numeric?
+  end
+
+  def test_is_integer
+    assert Polars::Int64.integer?
+    assert Polars::UInt64.integer?
+    refute Polars::String.integer?
+  end
+
+  def test_is_signed_integer
+    assert Polars::Int64.signed_integer?
+    refute Polars::UInt64.signed_integer?
+    refute Polars::String.signed_integer?
+  end
+
+  def test_is_unsigned_integer
+    assert Polars::UInt64.unsigned_integer?
+    refute Polars::Int64.unsigned_integer?
+    refute Polars::String.unsigned_integer?
+  end
+
+  def test_is_float
+    assert Polars::Float32.float?
+    assert Polars::Float64.float?
+    refute Polars::Int64.float?
+    refute Polars::String.float?
+  end
+
+  def test_is_temporal
+    assert Polars::Date.temporal?
+    assert Polars::Time.temporal?
+    assert Polars::Datetime.temporal?
+    assert Polars::Datetime.new("ns").temporal?
+    assert Polars::Duration.temporal?
+    assert Polars::Duration.new("ns").temporal?
+    refute Polars::Int64.temporal?
+    refute Polars::String.temporal?
+  end
+
+  def test_is_nested
+    refute Polars::Int64.nested?
+    assert Polars::List.nested?
+    assert Polars::List.new(Polars::Int64).nested?
   end
 end

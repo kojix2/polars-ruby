@@ -11,32 +11,112 @@ module Polars
 
     # Check if binaries in Series contain a binary substring.
     #
-    # @param lit [String]
+    # @param literal [String]
     #   The binary substring to look for
     #
     # @return [Expr]
-    def contains(lit)
-      Utils.wrap_expr(_rbexpr.binary_contains(lit))
+    #
+    # @example
+    #   colors = Polars::DataFrame.new(
+    #     {
+    #       "name" => ["black", "yellow", "blue"],
+    #       "code" => ["\x00\x00\x00".b, "\xff\xff\x00".b, "\x00\x00\xff".b],
+    #       "lit" => ["\x00".b, "\xff\x00".b, "\xff\xff".b]
+    #     }
+    #   )
+    #   colors.select(
+    #     "name",
+    #     Polars.col("code").bin.contains("\xff".b).alias("contains_with_lit"),
+    #     Polars.col("code").bin.contains(Polars.col("lit")).alias("contains_with_expr"),
+    #   )
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────┬───────────────────┬────────────────────┐
+    #   # │ name   ┆ contains_with_lit ┆ contains_with_expr │
+    #   # │ ---    ┆ ---               ┆ ---                │
+    #   # │ str    ┆ bool              ┆ bool               │
+    #   # ╞════════╪═══════════════════╪════════════════════╡
+    #   # │ black  ┆ false             ┆ true               │
+    #   # │ yellow ┆ true              ┆ true               │
+    #   # │ blue   ┆ true              ┆ false              │
+    #   # └────────┴───────────────────┴────────────────────┘
+    def contains(literal)
+      literal = Utils.parse_into_expression(literal, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.binary_contains(literal))
     end
 
     # Check if string values end with a binary substring.
     #
-    # @param sub [String]
+    # @param suffix [String]
     #   Suffix substring.
     #
     # @return [Expr]
-    def ends_with(sub)
-      Utils.wrap_expr(_rbexpr.binary_ends_with(sub))
+    #
+    # @example
+    #   colors = Polars::DataFrame.new(
+    #     {
+    #       "name" => ["black", "yellow", "blue"],
+    #       "code" => ["\x00\x00\x00".b, "\xff\xff\x00".b, "\x00\x00\xff".b],
+    #       "suffix" => ["\x00".b, "\xff\x00".b, "\x00\x00".b]
+    #     }
+    #   )
+    #   colors.select(
+    #     "name",
+    #     Polars.col("code").bin.ends_with("\xff".b).alias("ends_with_lit"),
+    #     Polars.col("code").bin.ends_with(Polars.col("suffix")).alias("ends_with_expr")
+    #   )
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────┬───────────────┬────────────────┐
+    #   # │ name   ┆ ends_with_lit ┆ ends_with_expr │
+    #   # │ ---    ┆ ---           ┆ ---            │
+    #   # │ str    ┆ bool          ┆ bool           │
+    #   # ╞════════╪═══════════════╪════════════════╡
+    #   # │ black  ┆ false         ┆ true           │
+    #   # │ yellow ┆ false         ┆ true           │
+    #   # │ blue   ┆ true          ┆ false          │
+    #   # └────────┴───────────────┴────────────────┘
+    def ends_with(suffix)
+      suffix = Utils.parse_into_expression(suffix, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.binary_ends_with(suffix))
     end
 
     # Check if values start with a binary substring.
     #
-    # @param sub [String]
+    # @param prefix [String]
     #   Prefix substring.
     #
     # @return [Expr]
-    def starts_with(sub)
-      Utils.wrap_expr(_rbexpr.binary_starts_with(sub))
+    #
+    # @example
+    #   colors = Polars::DataFrame.new(
+    #     {
+    #       "name": ["black", "yellow", "blue"],
+    #       "code": ["\x00\x00\x00".b, "\xff\xff\x00".b, "\x00\x00\xff".b],
+    #       "prefix": ["\x00".b, "\xff\x00".b, "\x00\x00".b]
+    #     }
+    #   )
+    #   colors.select(
+    #     "name",
+    #     Polars.col("code").bin.starts_with("\xff".b).alias("starts_with_lit"),
+    #     Polars.col("code")
+    #     .bin.starts_with(Polars.col("prefix"))
+    #     .alias("starts_with_expr")
+    #   )
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────┬─────────────────┬──────────────────┐
+    #   # │ name   ┆ starts_with_lit ┆ starts_with_expr │
+    #   # │ ---    ┆ ---             ┆ ---              │
+    #   # │ str    ┆ bool            ┆ bool             │
+    #   # ╞════════╪═════════════════╪══════════════════╡
+    #   # │ black  ┆ false           ┆ true             │
+    #   # │ yellow ┆ true            ┆ false            │
+    #   # │ blue   ┆ false           ┆ true             │
+    #   # └────────┴─────────────────┴──────────────────┘
+    def starts_with(prefix)
+      prefix = Utils.parse_into_expression(prefix, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.binary_starts_with(prefix))
     end
 
     # Decode a value using the provided encoding.
@@ -48,6 +128,28 @@ module Polars
     #   otherwise mask out with a null value.
     #
     # @return [Expr]
+    #
+    # @example
+    #   colors = Polars::DataFrame.new(
+    #     {
+    #       "name" => ["black", "yellow", "blue"],
+    #       "encoded" => ["000000".b, "ffff00".b, "0000ff".b]
+    #     }
+    #   )
+    #   colors.with_columns(
+    #     Polars.col("encoded").bin.decode("hex").alias("code")
+    #   )
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────┬───────────┬─────────────────┐
+    #   # │ name   ┆ encoded   ┆ code            │
+    #   # │ ---    ┆ ---       ┆ ---             │
+    #   # │ str    ┆ binary    ┆ binary          │
+    #   # ╞════════╪═══════════╪═════════════════╡
+    #   # │ black  ┆ b"000000" ┆ b"\x00\x00\x00" │
+    #   # │ yellow ┆ b"ffff00" ┆ b"\xff\xff\x00" │
+    #   # │ blue   ┆ b"0000ff" ┆ b"\x00\x00\xff" │
+    #   # └────────┴───────────┴─────────────────┘
     def decode(encoding, strict: true)
       if encoding == "hex"
         Utils.wrap_expr(_rbexpr.binary_hex_decode(strict))
@@ -64,6 +166,28 @@ module Polars
     #   The encoding to use.
     #
     # @return [Expr]
+    #
+    # @example
+    #   colors = Polars::DataFrame.new(
+    #     {
+    #       "color" => ["black", "yellow", "blue"],
+    #       "code" => ["\x00\x00\x00".b, "\xff\xff\x00".b, "\x00\x00\xff".b]
+    #     }
+    #   )
+    #   colors.with_columns(
+    #     Polars.col("code").bin.encode("hex").alias("encoded")
+    #   )
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌────────┬─────────────────┬─────────┐
+    #   # │ color  ┆ code            ┆ encoded │
+    #   # │ ---    ┆ ---             ┆ ---     │
+    #   # │ str    ┆ binary          ┆ str     │
+    #   # ╞════════╪═════════════════╪═════════╡
+    #   # │ black  ┆ b"\x00\x00\x00" ┆ 000000  │
+    #   # │ yellow ┆ b"\xff\xff\x00" ┆ ffff00  │
+    #   # │ blue   ┆ b"\x00\x00\xff" ┆ 0000ff  │
+    #   # └────────┴─────────────────┴─────────┘
     def encode(encoding)
       if encoding == "hex"
         Utils.wrap_expr(_rbexpr.binary_hex_encode)

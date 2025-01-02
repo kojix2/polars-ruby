@@ -39,7 +39,7 @@ module Polars
     #   # ]
     def to_date(format = nil, strict: true, exact: true, cache: true)
       _validate_format_argument(format)
-      Utils.wrap_expr(self._rbexpr.str_to_date(format, strict, exact, cache))
+      Utils.wrap_expr(_rbexpr.str_to_date(format, strict, exact, cache))
     end
 
     # Convert a Utf8 column into a Datetime column.
@@ -83,14 +83,14 @@ module Polars
       strict: true,
       exact: true,
       cache: true,
-      use_earliest: nil,
       ambiguous: "raise"
     )
       _validate_format_argument(format)
-      ambiguous = Utils.rename_use_earliest_to_ambiguous(use_earliest, ambiguous)
-      ambiguous = Polars.lit(ambiguous) unless ambiguous.is_a?(Expr)
+      unless ambiguous.is_a?(Expr)
+        ambiguous = Polars.lit(ambiguous)
+      end
       Utils.wrap_expr(
-        self._rbexpr.str_to_datetime(
+        _rbexpr.str_to_datetime(
           format,
           time_unit,
           time_zone,
@@ -211,6 +211,49 @@ module Polars
       end
     end
 
+    # Convert a String column into a Decimal column.
+    #
+    # This method infers the needed parameters `precision` and `scale`.
+    #
+    # @param inference_length [Integer]
+    #   Number of elements to parse to determine the `precision` and `scale`.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "numbers": [
+    #         "40.12",
+    #         "3420.13",
+    #         "120134.19",
+    #         "3212.98",
+    #         "12.90",
+    #         "143.09",
+    #         "143.9"
+    #       ]
+    #     }
+    #   )
+    #   df.with_columns(numbers_decimal: Polars.col("numbers").str.to_decimal)
+    #   # =>
+    #   # shape: (7, 2)
+    #   # ┌───────────┬─────────────────┐
+    #   # │ numbers   ┆ numbers_decimal │
+    #   # │ ---       ┆ ---             │
+    #   # │ str       ┆ decimal[*,2]    │
+    #   # ╞═══════════╪═════════════════╡
+    #   # │ 40.12     ┆ 40.12           │
+    #   # │ 3420.13   ┆ 3420.13         │
+    #   # │ 120134.19 ┆ 120134.19       │
+    #   # │ 3212.98   ┆ 3212.98         │
+    #   # │ 12.90     ┆ 12.90           │
+    #   # │ 143.09    ┆ 143.09          │
+    #   # │ 143.9     ┆ 143.90          │
+    #   # └───────────┴─────────────────┘
+    def to_decimal(inference_length = 100)
+      Utils.wrap_expr(_rbexpr.str_to_decimal(inference_length))
+    end
+
     # Get length of the strings as `:u32` (as number of bytes).
     #
     # @return [Expr]
@@ -222,8 +265,8 @@ module Polars
     # @example
     #   df = Polars::DataFrame.new({"s" => ["Café", nil, "345", "東京"]}).with_columns(
     #     [
-    #       Polars.col("s").str.lengths.alias("length"),
-    #       Polars.col("s").str.n_chars.alias("nchars")
+    #       Polars.col("s").str.len_bytes.alias("length"),
+    #       Polars.col("s").str.len_chars.alias("nchars")
     #     ]
     #   )
     #   df
@@ -239,9 +282,10 @@ module Polars
     #   # │ 345  ┆ 3      ┆ 3      │
     #   # │ 東京 ┆ 6      ┆ 2      │
     #   # └──────┴────────┴────────┘
-    def lengths
+    def len_bytes
       Utils.wrap_expr(_rbexpr.str_len_bytes)
     end
+    alias_method :lengths, :len_bytes
 
     # Get length of the strings as `:u32` (as number of chars).
     #
@@ -254,8 +298,8 @@ module Polars
     # @example
     #   df = Polars::DataFrame.new({"s" => ["Café", nil, "345", "東京"]}).with_columns(
     #     [
-    #       Polars.col("s").str.lengths.alias("length"),
-    #       Polars.col("s").str.n_chars.alias("nchars")
+    #       Polars.col("s").str.len_bytes.alias("length"),
+    #       Polars.col("s").str.len_chars.alias("nchars")
     #     ]
     #   )
     #   df
@@ -271,32 +315,49 @@ module Polars
     #   # │ 345  ┆ 3      ┆ 3      │
     #   # │ 東京 ┆ 6      ┆ 2      │
     #   # └──────┴────────┴────────┘
-    def n_chars
+    def len_chars
       Utils.wrap_expr(_rbexpr.str_len_chars)
     end
+    alias_method :n_chars, :len_chars
 
     # Vertically concat the values in the Series to a single string value.
     #
     # @param delimiter [String]
     #   The delimiter to insert between consecutive string values.
+    # @param ignore_nulls [Boolean]
+    #   Ignore null values (default).
     #
     # @return [Expr]
     #
     # @example
     #   df = Polars::DataFrame.new({"foo" => [1, nil, 2]})
-    #   df.select(Polars.col("foo").str.concat("-"))
+    #   df.select(Polars.col("foo").str.join("-"))
     #   # =>
     #   # shape: (1, 1)
-    #   # ┌──────────┐
-    #   # │ foo      │
-    #   # │ ---      │
-    #   # │ str      │
-    #   # ╞══════════╡
-    #   # │ 1-null-2 │
-    #   # └──────────┘
-    def concat(delimiter = "-")
-      Utils.wrap_expr(_rbexpr.str_concat(delimiter))
+    #   # ┌─────┐
+    #   # │ foo │
+    #   # │ --- │
+    #   # │ str │
+    #   # ╞═════╡
+    #   # │ 1-2 │
+    #   # └─────┘
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"foo" => [1, nil, 2]})
+    #   df.select(Polars.col("foo").str.join("-", ignore_nulls: false))
+    #   # =>
+    #   # shape: (1, 1)
+    #   # ┌──────┐
+    #   # │ foo  │
+    #   # │ ---  │
+    #   # │ str  │
+    #   # ╞══════╡
+    #   # │ null │
+    #   # └──────┘
+    def join(delimiter = "-", ignore_nulls: true)
+      Utils.wrap_expr(_rbexpr.str_join(delimiter, ignore_nulls))
     end
+    alias_method :concat, :join
 
     # Transform to uppercase variant.
     #
@@ -340,6 +401,29 @@ module Polars
       Utils.wrap_expr(_rbexpr.str_to_lowercase)
     end
 
+    # Transform to titlecase variant.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {"sing": ["welcome to my world", "THERE'S NO TURNING BACK"]}
+    #   )
+    #   df.with_columns(foo_title: Polars.col("sing").str.to_titlecase)
+    #   # =>
+    #   # shape: (2, 2)
+    #   # ┌─────────────────────────┬─────────────────────────┐
+    #   # │ sing                    ┆ foo_title               │
+    #   # │ ---                     ┆ ---                     │
+    #   # │ str                     ┆ str                     │
+    #   # ╞═════════════════════════╪═════════════════════════╡
+    #   # │ welcome to my world     ┆ Welcome To My World     │
+    #   # │ THERE'S NO TURNING BACK ┆ There's No Turning Back │
+    #   # └─────────────────────────┴─────────────────────────┘
+    def to_titlecase
+      Utils.wrap_expr(_rbexpr.str_to_titlecase)
+    end
+
     # Remove leading and trailing whitespace.
     #
     # @param characters [String, nil]
@@ -362,7 +446,7 @@ module Polars
     #   # │ both  │
     #   # └───────┘
     def strip_chars(characters = nil)
-      characters = Utils.parse_as_expression(characters, str_as_lit: true)
+      characters = Utils.parse_into_expression(characters, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_strip_chars(characters))
     end
     alias_method :strip, :strip_chars
@@ -389,7 +473,7 @@ module Polars
     #   # │ both   │
     #   # └────────┘
     def strip_chars_start(characters = nil)
-      characters = Utils.parse_as_expression(characters, str_as_lit: true)
+      characters = Utils.parse_into_expression(characters, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_strip_chars_start(characters))
     end
     alias_method :lstrip, :strip_chars_start
@@ -416,10 +500,129 @@ module Polars
     #   # │  both │
     #   # └───────┘
     def strip_chars_end(characters = nil)
-      characters = Utils.parse_as_expression(characters, str_as_lit: true)
+      characters = Utils.parse_into_expression(characters, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_strip_chars_end(characters))
     end
     alias_method :rstrip, :strip_chars_end
+
+    # Remove prefix.
+    #
+    # The prefix will be removed from the string exactly once, if found.
+    #
+    # @param prefix [String]
+    #   The prefix to be removed.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a" => ["foobar", "foofoobar", "foo", "bar"]})
+    #   df.with_columns(Polars.col("a").str.strip_prefix("foo").alias("stripped"))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌───────────┬──────────┐
+    #   # │ a         ┆ stripped │
+    #   # │ ---       ┆ ---      │
+    #   # │ str       ┆ str      │
+    #   # ╞═══════════╪══════════╡
+    #   # │ foobar    ┆ bar      │
+    #   # │ foofoobar ┆ foobar   │
+    #   # │ foo       ┆          │
+    #   # │ bar       ┆ bar      │
+    #   # └───────────┴──────────┘
+    def strip_prefix(prefix)
+      prefix = Utils.parse_into_expression(prefix, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.str_strip_prefix(prefix))
+    end
+
+    # Remove suffix.
+    #
+    # The suffix will be removed from the string exactly once, if found.
+    #
+    #
+    # @param suffix [String]
+    #   The suffix to be removed.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a" => ["foobar", "foobarbar", "foo", "bar"]})
+    #   df.with_columns(Polars.col("a").str.strip_suffix("bar").alias("stripped"))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌───────────┬──────────┐
+    #   # │ a         ┆ stripped │
+    #   # │ ---       ┆ ---      │
+    #   # │ str       ┆ str      │
+    #   # ╞═══════════╪══════════╡
+    #   # │ foobar    ┆ foo      │
+    #   # │ foobarbar ┆ foobar   │
+    #   # │ foo       ┆ foo      │
+    #   # │ bar       ┆          │
+    #   # └───────────┴──────────┘
+    def strip_suffix(suffix)
+      suffix = Utils.parse_into_expression(suffix, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.str_strip_suffix(suffix))
+    end
+
+    # Pad the start of the string until it reaches the given length.
+    #
+    # @param length [Integer]
+    #   Pad the string until it reaches this length. Strings with length equal to
+    #   or greater than this value are returned as-is.
+    # @param fill_char [String]
+    #   The character to pad the string with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a": ["cow", "monkey", "hippopotamus", nil]})
+    #   df.with_columns(padded: Polars.col("a").str.pad_start(8, "*"))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌──────────────┬──────────────┐
+    #   # │ a            ┆ padded       │
+    #   # │ ---          ┆ ---          │
+    #   # │ str          ┆ str          │
+    #   # ╞══════════════╪══════════════╡
+    #   # │ cow          ┆ *****cow     │
+    #   # │ monkey       ┆ **monkey     │
+    #   # │ hippopotamus ┆ hippopotamus │
+    #   # │ null         ┆ null         │
+    #   # └──────────────┴──────────────┘
+    def pad_start(length, fill_char = " ")
+      Utils.wrap_expr(_rbexpr.str_pad_start(length, fill_char))
+    end
+    alias_method :rjust, :pad_start
+
+    # Pad the end of the string until it reaches the given length.
+    #
+    # @param length [Integer]
+    #   Pad the string until it reaches this length. Strings with length equal to
+    #   or greater than this value are returned as-is.
+    # @param fill_char [String]
+    #   The character to pad the string with.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"a": ["cow", "monkey", "hippopotamus", nil]})
+    #   df.with_columns(padded: Polars.col("a").str.pad_end(8, "*"))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌──────────────┬──────────────┐
+    #   # │ a            ┆ padded       │
+    #   # │ ---          ┆ ---          │
+    #   # │ str          ┆ str          │
+    #   # ╞══════════════╪══════════════╡
+    #   # │ cow          ┆ cow*****     │
+    #   # │ monkey       ┆ monkey**     │
+    #   # │ hippopotamus ┆ hippopotamus │
+    #   # │ null         ┆ null         │
+    #   # └──────────────┴──────────────┘
+    def pad_end(length, fill_char = " ")
+      Utils.wrap_expr(_rbexpr.str_pad_end(length, fill_char))
+    end
+    alias_method :ljust, :pad_end
 
     # Fills the string with zeroes.
     #
@@ -430,104 +633,30 @@ module Polars
     # sign character rather than before. The original string is returned if width is
     # less than or equal to `s.length`.
     #
-    # @param alignment [Integer]
+    # @param length [Integer]
     #   Fill the value up to this length
     #
     # @return [Expr]
     #
     # @example
-    #   df = Polars::DataFrame.new(
-    #     {
-    #       "num" => [-10, -1, 0, 1, 10, 100, 1000, 10000, 100000, 1000000, nil]
-    #     }
-    #   )
-    #   df.with_column(Polars.col("num").cast(String).str.zfill(5))
+    #   df = Polars::DataFrame.new({"a" => [-1, 123, 999999, nil]})
+    #   df.with_columns(Polars.col("a").cast(Polars::String).str.zfill(4).alias("zfill"))
     #   # =>
-    #   # shape: (11, 1)
-    #   # ┌─────────┐
-    #   # │ num     │
-    #   # │ ---     │
-    #   # │ str     │
-    #   # ╞═════════╡
-    #   # │ -0010   │
-    #   # │ -0001   │
-    #   # │ 00000   │
-    #   # │ 00001   │
-    #   # │ …       │
-    #   # │ 10000   │
-    #   # │ 100000  │
-    #   # │ 1000000 │
-    #   # │ null    │
-    #   # └─────────┘
-    def zfill(alignment)
-      Utils.wrap_expr(_rbexpr.str_zfill(alignment))
+    #   # shape: (4, 2)
+    #   # ┌────────┬────────┐
+    #   # │ a      ┆ zfill  │
+    #   # │ ---    ┆ ---    │
+    #   # │ i64    ┆ str    │
+    #   # ╞════════╪════════╡
+    #   # │ -1     ┆ -001   │
+    #   # │ 123    ┆ 0123   │
+    #   # │ 999999 ┆ 999999 │
+    #   # │ null   ┆ null   │
+    #   # └────────┴────────┘
+    def zfill(length)
+      length = Utils.parse_into_expression(length)
+      Utils.wrap_expr(_rbexpr.str_zfill(length))
     end
-
-    # Return the string left justified in a string of length `length`.
-    #
-    # Padding is done using the specified `fillchar`.
-    # The original string is returned if `length` is less than or equal to
-    # `s.length`.
-    #
-    # @param length [Integer]
-    #   Justify left to this length.
-    # @param fillchar [String]
-    #   Fill with this ASCII character.
-    #
-    # @return [Expr]
-    #
-    # @example
-    #   df = Polars::DataFrame.new({"a" => ["cow", "monkey", nil, "hippopotamus"]})
-    #   df.select(Polars.col("a").str.ljust(8, "*"))
-    #   # =>
-    #   # shape: (4, 1)
-    #   # ┌──────────────┐
-    #   # │ a            │
-    #   # │ ---          │
-    #   # │ str          │
-    #   # ╞══════════════╡
-    #   # │ cow*****     │
-    #   # │ monkey**     │
-    #   # │ null         │
-    #   # │ hippopotamus │
-    #   # └──────────────┘
-    def ljust(length, fillchar = " ")
-      Utils.wrap_expr(_rbexpr.str_pad_end(length, fillchar))
-    end
-    alias_method :pad_end, :ljust
-
-    # Return the string right justified in a string of length `length`.
-    #
-    # Padding is done using the specified `fillchar`.
-    # The original string is returned if `length` is less than or equal to
-    # `s.length`.
-    #
-    # @param length [Integer]
-    #   Justify right to this length.
-    # @param fillchar [String]
-    #   Fill with this ASCII character.
-    #
-    # @return [Expr]
-    #
-    # @example
-    #   df = Polars::DataFrame.new({"a" => ["cow", "monkey", nil, "hippopotamus"]})
-    #   df.select(Polars.col("a").str.rjust(8, "*"))
-    #   # =>
-    #   # shape: (4, 1)
-    #   # ┌──────────────┐
-    #   # │ a            │
-    #   # │ ---          │
-    #   # │ str          │
-    #   # ╞══════════════╡
-    #   # │ *****cow     │
-    #   # │ **monkey     │
-    #   # │ null         │
-    #   # │ hippopotamus │
-    #   # └──────────────┘
-    def rjust(length, fillchar = " ")
-      Utils.wrap_expr(_rbexpr.str_pad_start(length, fillchar))
-    end
-    alias_method :pad_start, :rjust
 
     # Check if string contains a substring that matches a regex.
     #
@@ -560,7 +689,7 @@ module Polars
     #   # │ null        ┆ null  ┆ null    │
     #   # └─────────────┴───────┴─────────┘
     def contains(pattern, literal: false, strict: true)
-      pattern = Utils.expr_to_lit_or_expr(pattern, str_to_lit: true)._rbexpr
+      pattern = Utils.parse_into_expression(pattern, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_contains(pattern, literal, strict))
     end
 
@@ -600,7 +729,7 @@ module Polars
     #   # │ mango  │
     #   # └────────┘
     def ends_with(sub)
-      sub = Utils.expr_to_lit_or_expr(sub, str_to_lit: true)._rbexpr
+      sub = Utils.parse_into_expression(sub, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_ends_with(sub))
     end
 
@@ -640,7 +769,7 @@ module Polars
     #   # │ apple  │
     #   # └────────┘
     def starts_with(sub)
-      sub = Utils.expr_to_lit_or_expr(sub, str_to_lit: true)._rbexpr
+      sub = Utils.parse_into_expression(sub, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_starts_with(sub))
     end
 
@@ -659,24 +788,25 @@ module Polars
     #     {"json" => ['{"a":1, "b": true}', nil, '{"a":2, "b": false}']}
     #   )
     #   dtype = Polars::Struct.new([Polars::Field.new("a", Polars::Int64), Polars::Field.new("b", Polars::Boolean)])
-    #   df.select(Polars.col("json").str.json_extract(dtype))
+    #   df.select(Polars.col("json").str.json_decode(dtype))
     #   # =>
     #   # shape: (3, 1)
-    #   # ┌─────────────┐
-    #   # │ json        │
-    #   # │ ---         │
-    #   # │ struct[2]   │
-    #   # ╞═════════════╡
-    #   # │ {1,true}    │
-    #   # │ {null,null} │
-    #   # │ {2,false}   │
-    #   # └─────────────┘
-    def json_extract(dtype = nil, infer_schema_length: 100)
+    #   # ┌───────────┐
+    #   # │ json      │
+    #   # │ ---       │
+    #   # │ struct[2] │
+    #   # ╞═══════════╡
+    #   # │ {1,true}  │
+    #   # │ null      │
+    #   # │ {2,false} │
+    #   # └───────────┘
+    def json_decode(dtype = nil, infer_schema_length: 100)
       if !dtype.nil?
         dtype = Utils.rb_type_to_dtype(dtype)
       end
-      Utils.wrap_expr(_rbexpr.str_json_extract(dtype, infer_schema_length))
+      Utils.wrap_expr(_rbexpr.str_json_decode(dtype, infer_schema_length))
     end
+    alias_method :json_extract, :json_decode
 
     # Extract the first match of json string with provided JSONPath expression.
     #
@@ -710,6 +840,7 @@ module Polars
     #   # │ true     │
     #   # └──────────┘
     def json_path_match(json_path)
+      json_path = Utils.parse_into_expression(json_path, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_json_path_match(json_path))
     end
 
@@ -730,15 +861,15 @@ module Polars
     #   df.select(Polars.col("encoded").str.decode("hex"))
     #   # =>
     #   # shape: (3, 1)
-    #   # ┌───────────────┐
-    #   # │ encoded       │
-    #   # │ ---           │
-    #   # │ binary        │
-    #   # ╞═══════════════╡
-    #   # │ [binary data] │
-    #   # │ [binary data] │
-    #   # │ null          │
-    #   # └───────────────┘
+    #   # ┌─────────┐
+    #   # │ encoded │
+    #   # │ ---     │
+    #   # │ binary  │
+    #   # ╞═════════╡
+    #   # │ b"foo"  │
+    #   # │ b"bar"  │
+    #   # │ null    │
+    #   # └─────────┘
     def decode(encoding, strict: true)
       if encoding == "hex"
         Utils.wrap_expr(_rbexpr.str_hex_decode(strict))
@@ -809,6 +940,7 @@ module Polars
     #   # │ 678 │
     #   # └─────┘
     def extract(pattern, group_index: 1)
+      pattern = Utils.parse_into_expression(pattern, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_extract(pattern, group_index))
     end
 
@@ -840,8 +972,64 @@ module Polars
     #   # │ ["678", "910"] │
     #   # └────────────────┘
     def extract_all(pattern)
-      pattern = Utils.expr_to_lit_or_expr(pattern, str_to_lit: true)
-      Utils.wrap_expr(_rbexpr.str_extract_all(pattern._rbexpr))
+      pattern = Utils.parse_into_expression(pattern, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.str_extract_all(pattern))
+    end
+
+    # Extract all capture groups for the given regex pattern.
+    #
+    # @param pattern [String]
+    #   A valid regular expression pattern containing at least one capture group,
+    #   compatible with the [regex crate](https://docs.rs/regex/latest/regex/).
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "url": [
+    #         "http://vote.com/ballon_dor?candidate=messi&ref=python",
+    #         "http://vote.com/ballon_dor?candidate=weghorst&ref=polars",
+    #         "http://vote.com/ballon_dor?error=404&ref=rust"
+    #       ]
+    #     }
+    #   )
+    #   pattern = /candidate=(?<candidate>\w+)&ref=(?<ref>\w+)/.to_s
+    #   df.select(captures: Polars.col("url").str.extract_groups(pattern)).unnest(
+    #     "captures"
+    #   )
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌───────────┬────────┐
+    #   # │ candidate ┆ ref    │
+    #   # │ ---       ┆ ---    │
+    #   # │ str       ┆ str    │
+    #   # ╞═══════════╪════════╡
+    #   # │ messi     ┆ python │
+    #   # │ weghorst  ┆ polars │
+    #   # │ null      ┆ null   │
+    #   # └───────────┴────────┘
+    #
+    # @example Unnamed groups have their numerical position converted to a string:
+    #   pattern = /candidate=(\w+)&ref=(\w+)/.to_s
+    #   (
+    #     df.with_columns(
+    #       captures: Polars.col("url").str.extract_groups(pattern)
+    #     ).with_columns(name: Polars.col("captures").struct["1"].str.to_uppercase)
+    #   )
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────────────────────────────────┬───────────────────────┬──────────┐
+    #   # │ url                             ┆ captures              ┆ name     │
+    #   # │ ---                             ┆ ---                   ┆ ---      │
+    #   # │ str                             ┆ struct[2]             ┆ str      │
+    #   # ╞═════════════════════════════════╪═══════════════════════╪══════════╡
+    #   # │ http://vote.com/ballon_dor?can… ┆ {"messi","python"}    ┆ MESSI    │
+    #   # │ http://vote.com/ballon_dor?can… ┆ {"weghorst","polars"} ┆ WEGHORST │
+    #   # │ http://vote.com/ballon_dor?err… ┆ {null,null}           ┆ null     │
+    #   # └─────────────────────────────────┴───────────────────────┴──────────┘
+    def extract_groups(pattern)
+      Utils.wrap_expr(_rbexpr.str_extract_groups(pattern))
     end
 
     # Count all successive non-overlapping regex matches.
@@ -869,7 +1057,7 @@ module Polars
     #   # │ 6            │
     #   # └──────────────┘
     def count_matches(pattern, literal: false)
-      pattern = Utils.parse_as_expression(pattern, str_as_lit: true)
+      pattern = Utils.parse_into_expression(pattern, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_count_matches(pattern, literal))
     end
     alias_method :count_match, :count_matches
@@ -898,12 +1086,11 @@ module Polars
     #   # │ ["foo", "bar", "baz"] │
     #   # └───────────────────────┘
     def split(by, inclusive: false)
-      by = Utils.parse_as_expression(by, str_as_lit: true)
+      by = Utils.parse_into_expression(by, str_as_lit: true)
       if inclusive
-        Utils.wrap_expr(_rbexpr.str_split_inclusive(by))
-      else
-        Utils.wrap_expr(_rbexpr.str_split(by))
+        return Utils.wrap_expr(_rbexpr.str_split_inclusive(by))
       end
+      Utils.wrap_expr(_rbexpr.str_split(by))
     end
 
     # Split the string by a substring using `n` splits.
@@ -941,7 +1128,7 @@ module Polars
     #   # │ {"d","4"}   │
     #   # └─────────────┘
     def split_exact(by, n, inclusive: false)
-      by = Utils.parse_as_expression(by, str_as_lit: true)
+      by = Utils.parse_into_expression(by, str_as_lit: true)
       if inclusive
         Utils.wrap_expr(_rbexpr.str_split_exact_inclusive(by, n))
       else
@@ -978,7 +1165,7 @@ module Polars
     #   # │ {"foo","bar baz"} │
     #   # └───────────────────┘
     def splitn(by, n)
-      by = Utils.parse_as_expression(by, str_as_lit: true)
+      by = Utils.parse_into_expression(by, str_as_lit: true)
       Utils.wrap_expr(_rbexpr.str_splitn(by, n))
     end
 
@@ -1009,9 +1196,9 @@ module Polars
     #   # │ 2   ┆ abc456 │
     #   # └─────┴────────┘
     def replace(pattern, value, literal: false, n: 1)
-      pattern = Utils.expr_to_lit_or_expr(pattern, str_to_lit: true)
-      value = Utils.expr_to_lit_or_expr(value, str_to_lit: true)
-      Utils.wrap_expr(_rbexpr.str_replace_n(pattern._rbexpr, value._rbexpr, literal, n))
+      pattern = Utils.parse_into_expression(pattern, str_as_lit: true)
+      value = Utils.parse_into_expression(value, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.str_replace_n(pattern, value, literal, n))
     end
 
     # Replace all matching regex/literal substrings with a new string value.
@@ -1039,9 +1226,31 @@ module Polars
     #   # │ 2   ┆ 123-123 │
     #   # └─────┴─────────┘
     def replace_all(pattern, value, literal: false)
-      pattern = Utils.expr_to_lit_or_expr(pattern, str_to_lit: true)
-      value = Utils.expr_to_lit_or_expr(value, str_to_lit: true)
-      Utils.wrap_expr(_rbexpr.str_replace_all(pattern._rbexpr, value._rbexpr, literal))
+      pattern = Utils.parse_into_expression(pattern, str_as_lit: true)
+      value = Utils.parse_into_expression(value, str_as_lit: true)
+      Utils.wrap_expr(_rbexpr.str_replace_all(pattern, value, literal))
+    end
+
+    # Returns string values in reversed order.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"text" => ["foo", "bar", "man\u0303ana"]})
+    #   df.with_columns(Polars.col("text").str.reverse.alias("reversed"))
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌────────┬──────────┐
+    #   # │ text   ┆ reversed │
+    #   # │ ---    ┆ ---      │
+    #   # │ str    ┆ str      │
+    #   # ╞════════╪══════════╡
+    #   # │ foo    ┆ oof      │
+    #   # │ bar    ┆ rab      │
+    #   # │ mañana ┆ anañam   │
+    #   # └────────┴──────────┘
+    def reverse
+      Utils.wrap_expr(_rbexpr.str_reverse)
     end
 
     # Create subslices of the string values of a Utf8 Series.
@@ -1072,32 +1281,56 @@ module Polars
     #   # │ dragonfruit ┆ uit      │
     #   # └─────────────┴──────────┘
     def slice(offset, length = nil)
+      offset = Utils.parse_into_expression(offset)
+      length = Utils.parse_into_expression(length)
       Utils.wrap_expr(_rbexpr.str_slice(offset, length))
     end
 
-    # Returns a column with a separate row for every string character.
+    # Convert an Utf8 column into an Int64 column with base radix.
+    #
+    # @param base [Integer]
+    #   Positive integer which is the base of the string we are parsing.
+    #   Default: 10.
+    # @param strict [Boolean]
+    #   Bool, default=true will raise any ParseError or overflow as ComputeError.
+    #   false silently convert to Null.
     #
     # @return [Expr]
     #
     # @example
-    #   df = Polars::DataFrame.new({"a": ["foo", "bar"]})
-    #   df.select(Polars.col("a").str.explode)
+    #   df = Polars::DataFrame.new({"bin" => ["110", "101", "010", "invalid"]})
+    #   df.with_columns(Polars.col("bin").str.to_integer(base: 2, strict: false).alias("parsed"))
     #   # =>
-    #   # shape: (6, 1)
-    #   # ┌─────┐
-    #   # │ a   │
-    #   # │ --- │
-    #   # │ str │
-    #   # ╞═════╡
-    #   # │ f   │
-    #   # │ o   │
-    #   # │ o   │
-    #   # │ b   │
-    #   # │ a   │
-    #   # │ r   │
-    #   # └─────┘
-    def explode
-      Utils.wrap_expr(_rbexpr.str_explode)
+    #   # shape: (4, 2)
+    #   # ┌─────────┬────────┐
+    #   # │ bin     ┆ parsed │
+    #   # │ ---     ┆ ---    │
+    #   # │ str     ┆ i64    │
+    #   # ╞═════════╪════════╡
+    #   # │ 110     ┆ 6      │
+    #   # │ 101     ┆ 5      │
+    #   # │ 010     ┆ 2      │
+    #   # │ invalid ┆ null   │
+    #   # └─────────┴────────┘
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"hex" => ["fa1e", "ff00", "cafe", nil]})
+    #   df.with_columns(Polars.col("hex").str.to_integer(base: 16, strict: true).alias("parsed"))
+    #   # =>
+    #   # shape: (4, 2)
+    #   # ┌──────┬────────┐
+    #   # │ hex  ┆ parsed │
+    #   # │ ---  ┆ ---    │
+    #   # │ str  ┆ i64    │
+    #   # ╞══════╪════════╡
+    #   # │ fa1e ┆ 64030  │
+    #   # │ ff00 ┆ 65280  │
+    #   # │ cafe ┆ 51966  │
+    #   # │ null ┆ null   │
+    #   # └──────┴────────┘
+    def to_integer(base: 10, strict: true)
+      base = Utils.parse_into_expression(base, str_as_lit: false)
+      Utils.wrap_expr(_rbexpr.str_to_integer(base, strict))
     end
 
     # Parse integers with base radix from strings.
@@ -1128,24 +1361,128 @@ module Polars
     #   # │ 2    │
     #   # │ null │
     #   # └──────┘
+    def parse_int(radix = 2, strict: true)
+      to_integer(base: 2, strict: strict).cast(Int32, strict: strict)
+    end
+
+    # Use the aho-corasick algorithm to find matches.
+    #
+    # This version determines if any of the patterns find a match.
+    #
+    # @param patterns [String]
+    #   String patterns to search.
+    # @param ascii_case_insensitive [Boolean]
+    #   Enable ASCII-aware case insensitive matching.
+    #   When this option is enabled, searching will be performed without respect
+    #   to case for ASCII letters (a-z and A-Z) only.
+    #
+    # @return [Expr]
     #
     # @example
-    #   df = Polars::DataFrame.new({"hex" => ["fa1e", "ff00", "cafe", nil]})
-    #   df.select(Polars.col("hex").str.parse_int(16, strict: true))
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "lyrics": [
+    #         "Everybody wants to rule the world",
+    #         "Tell me what you want, what you really really want",
+    #         "Can you feel the love tonight"
+    #       ]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("lyrics").str.contains_any(["you", "me"]).alias("contains_any")
+    #   )
     #   # =>
-    #   # shape: (4, 1)
-    #   # ┌───────┐
-    #   # │ hex   │
-    #   # │ ---   │
-    #   # │ i32   │
-    #   # ╞═══════╡
-    #   # │ 64030 │
-    #   # │ 65280 │
-    #   # │ 51966 │
-    #   # │ null  │
-    #   # └───────┘
-    def parse_int(radix = 2, strict: true)
-      Utils.wrap_expr(_rbexpr.str_parse_int(radix, strict))
+    #   # shape: (3, 2)
+    #   # ┌─────────────────────────────────┬──────────────┐
+    #   # │ lyrics                          ┆ contains_any │
+    #   # │ ---                             ┆ ---          │
+    #   # │ str                             ┆ bool         │
+    #   # ╞═════════════════════════════════╪══════════════╡
+    #   # │ Everybody wants to rule the wo… ┆ false        │
+    #   # │ Tell me what you want, what yo… ┆ true         │
+    #   # │ Can you feel the love tonight   ┆ true         │
+    #   # └─────────────────────────────────┴──────────────┘
+    def contains_any(patterns, ascii_case_insensitive: false)
+      patterns = Utils.parse_into_expression(patterns, str_as_lit: false, list_as_series: true)
+      Utils.wrap_expr(
+        _rbexpr.str_contains_any(patterns, ascii_case_insensitive)
+      )
+    end
+
+    # Use the aho-corasick algorithm to replace many matches.
+    #
+    # @param patterns [String]
+    #   String patterns to search and replace.
+    # @param replace_with [String]
+    #   Strings to replace where a pattern was a match.
+    #   This can be broadcasted. So it supports many:one and many:many.
+    # @param ascii_case_insensitive [Boolean]
+    #   Enable ASCII-aware case insensitive matching.
+    #   When this option is enabled, searching will be performed without respect
+    #   to case for ASCII letters (a-z and A-Z) only.
+    #
+    # @return [Expr]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "lyrics": [
+    #         "Everybody wants to rule the world",
+    #         "Tell me what you want, what you really really want",
+    #         "Can you feel the love tonight"
+    #       ]
+    #     }
+    #   )
+    #   df.with_columns(
+    #     Polars.col("lyrics")
+    #     .str.replace_many(
+    #       ["me", "you", "they"],
+    #       ""
+    #     )
+    #     .alias("removes_pronouns")
+    #   )
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────────────────────────────────┬─────────────────────────────────┐
+    #   # │ lyrics                          ┆ removes_pronouns                │
+    #   # │ ---                             ┆ ---                             │
+    #   # │ str                             ┆ str                             │
+    #   # ╞═════════════════════════════════╪═════════════════════════════════╡
+    #   # │ Everybody wants to rule the wo… ┆ Everybody wants to rule the wo… │
+    #   # │ Tell me what you want, what yo… ┆ Tell  what  want, what  really… │
+    #   # │ Can you feel the love tonight   ┆ Can  feel the love tonight      │
+    #   # └─────────────────────────────────┴─────────────────────────────────┘
+    #
+    # @example
+    #   df.with_columns(
+    #     Polars.col("lyrics")
+    #     .str.replace_many(
+    #       ["me", "you"],
+    #       ["you", "me"]
+    #     )
+    #     .alias("confusing")
+    #   )
+    #   # =>
+    #   # shape: (3, 2)
+    #   # ┌─────────────────────────────────┬─────────────────────────────────┐
+    #   # │ lyrics                          ┆ confusing                       │
+    #   # │ ---                             ┆ ---                             │
+    #   # │ str                             ┆ str                             │
+    #   # ╞═════════════════════════════════╪═════════════════════════════════╡
+    #   # │ Everybody wants to rule the wo… ┆ Everybody wants to rule the wo… │
+    #   # │ Tell me what you want, what yo… ┆ Tell you what me want, what me… │
+    #   # │ Can you feel the love tonight   ┆ Can me feel the love tonight    │
+    #   # └─────────────────────────────────┴─────────────────────────────────┘
+    def replace_many(patterns, replace_with, ascii_case_insensitive: false)
+      patterns = Utils.parse_into_expression(patterns, str_as_lit: false, list_as_series: true)
+      replace_with = Utils.parse_into_expression(
+        replace_with, str_as_lit: true, list_as_series: true
+      )
+      Utils.wrap_expr(
+        _rbexpr.str_replace_many(
+          patterns, replace_with, ascii_case_insensitive
+        )
+      )
     end
 
     private

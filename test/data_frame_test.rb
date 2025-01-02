@@ -24,10 +24,33 @@ class DataFrameTest < Minitest::Test
   def test_new_array_series
     df = Polars::DataFrame.new([
       Polars::Series.new("a", [1, 2, 3]),
-      Polars::Series.new("b", ["one", "two", "three"]),
+      Polars::Series.new("b", ["one", "two", "three"])
     ])
     expected = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
     assert_frame expected, df
+  end
+
+  def test_new_array_arrays
+    error = assert_raises(TypeError) do
+      Polars::DataFrame.new([[1, "a"], [2, "b"]])
+    end
+    assert_match "unexpected value while building Series of type Int64; found value of type String", error.message
+
+    df = Polars::DataFrame.new([[1, "a"], [2, "b"]], orient: "row")
+    expected = Polars::DataFrame.new({"column_0" => [1, 2], "column_1" => ["a", "b"]})
+    assert_frame expected, df
+  end
+
+  def test_new_array_arrays_schema
+    df = Polars::DataFrame.new([[1, "a"], [2, "b"]], orient: "row", schema: ["c1", "c2"])
+    expected = Polars::DataFrame.new({"c1" => [1, 2], "c2" => ["a", "b"]})
+    assert_frame expected, df
+  end
+
+  def test_new_array_arrays_schema_dtypes
+    df = Polars::DataFrame.new([[1, 2], [3, 4]], orient: "row", schema: [["a", Polars::Float32], ["b", Polars::Int8]])
+    assert_equal df.columns, ["a", "b"]
+    assert_equal df.dtypes, [Polars::Float32, Polars::Int8]
   end
 
   def test_new_array_schema
@@ -72,13 +95,13 @@ class DataFrameTest < Minitest::Test
   end
 
   def test_new_hash_scalar_empty_series
-    df = Polars::DataFrame.new({"a" => [], "b" => Polars::Series.new([], dtype: Polars::Utf8)})
+    df = Polars::DataFrame.new({"a" => [], "b" => Polars::Series.new([], dtype: Polars::String)})
     assert_equal ["a", "b"], df.columns
-    assert_equal [Polars::Float32, Polars::Utf8], df.dtypes
+    assert_equal [Polars::Float32, Polars::String], df.dtypes
   end
 
   def test_new_hash_scalar_nil_empty_series
-    df = Polars::DataFrame.new({"a" => nil, "b" => Polars::Series.new([], dtype: Polars::Utf8)})
+    df = Polars::DataFrame.new({"a" => nil, "b" => Polars::Series.new([], dtype: Polars::String)})
     assert_equal ["a", "b"], df.columns
     # same behavior as Python
     assert_equal [Polars::Float32, Polars::Float32], df.dtypes
@@ -137,12 +160,17 @@ class DataFrameTest < Minitest::Test
 
   def test_dtypes
     df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
-    assert_equal [Polars::Int64, Polars::Utf8], df.dtypes
+    assert_equal [Polars::Int64, Polars::String], df.dtypes
+  end
+
+  def test_flags
+    df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
+    assert df.flags
   end
 
   def test_schema
     df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
-    expected = {"a" => Polars::Int64, "b" => Polars::Utf8}
+    expected = {"a" => Polars::Int64, "b" => Polars::String}
     assert_equal expected, df.schema
   end
 
@@ -306,9 +334,9 @@ class DataFrameTest < Minitest::Test
     assert_equal ["c", "b"], df.rename({"a" => "c"}).columns
   end
 
-  def test_insert_at_idx
+  def test_insert_column
     df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
-    df.insert_at_idx(1, Polars::Series.new("c", [4, 5, 6]))
+    df.insert_column(1, Polars::Series.new("c", [4, 5, 6]))
     assert_equal ["a", "c", "b"], df.columns
   end
 
@@ -376,6 +404,14 @@ class DataFrameTest < Minitest::Test
     df.group("a").count
   end
 
+  def test_group_by_dynamic
+    df = Polars::DataFrame.new({
+      "ts" => [Date.new(2020, 1, 1), Date.new(2020, 1, 2), Date.new(2020, 1, 3)],
+      "value" => [1, 2, 3]
+    })
+    df.group_by_dynamic("ts", every: "1d", period: "2d").agg("value")
+  end
+
   def test_join
     df = Polars::DataFrame.new({
       a: [1, 2, 3],
@@ -397,6 +433,49 @@ class DataFrameTest < Minitest::Test
     assert_equal expected, df.join(other_df, on: :a)
     assert_equal expected, df.join(other_df, on: ["a"])
     assert_equal expected, df.join(other_df, on: [:a])
+  end
+
+  def test_join_nulls
+    df1 = Polars::DataFrame.new({"a" => [1, 2, nil], "b" => [4, 4, 4]})
+    df2 = Polars::DataFrame.new({"a" => [nil, 2, 3], "c" => [5, 5, 5]})
+    df3 = df1.join(df2, on: "a", how: "inner")
+    assert_frame Polars::DataFrame.new({"a" => [2], "b" => [4], "c" => [5]}), df3
+    df4 = df1.join(df2, on: "a", how: "inner", join_nulls: true)
+    assert_frame Polars::DataFrame.new({"a" => [nil, 2], "b" => [4, 4], "c" => [5, 5]}), df4
+  end
+
+  def test_join_outer
+    df1 = Polars::DataFrame.new({"L1" => ["a", "b", "c"], "L2" => [1, 2, 3]})
+    df2 = Polars::DataFrame.new({"L1" => ["a", "c", "d"], "R2" => [7, 8, 9]})
+    df3 = df1.join(df2, on: "L1", how: "full")
+    expected =
+      Polars::DataFrame.new({
+        "L1" => ["a", "b", "c", nil],
+        "L2" => [1, 2, 3, nil],
+        "L1_right" => ["a", nil, "c", "d"],
+        "R2" => [7, nil, 8, 9]
+      })
+    assert_frame expected, df3.sort("L1", nulls_last: true)
+  end
+
+  def test_join_outer_coalesce
+    df1 = Polars::DataFrame.new({"L1" => ["a", "b", "c"], "L2" => [1, 2, 3]})
+    df2 = Polars::DataFrame.new({"L1" => ["a", "c", "d"], "R2" => [7, 8, 9]})
+    df3 = df1.join(df2, on: "L1", how: "full", coalesce: true)
+    expected =
+      Polars::DataFrame.new({
+        "L1" => ["a", "b", "c", "d"],
+        "L2" => [1, 2, 3, nil],
+        "R2" => [7, nil, 8, 9]
+      })
+    assert_frame expected, df3.sort("L1")
+  end
+
+  def test_join_cross
+    df1 = Polars::DataFrame.new({a: [1, 2]})
+    df2 = Polars::DataFrame.new({b: ["three", "four"]})
+    expected = Polars::DataFrame.new({a: [1, 1, 2, 2], b: ["three", "four", "three", "four"]})
+    assert_frame expected, df1.join(df2, how: "cross")
   end
 
   def test_with_column
@@ -439,6 +518,9 @@ class DataFrameTest < Minitest::Test
   end
 
   def test_with_columns
+    df = Polars::DataFrame.new({"a" => [1, 2]}).with_columns(nil)
+    expected = Polars::DataFrame.new({"a" => [1, 2], "literal" => [nil, nil]})
+    assert_frame expected, df
   end
 
   def test_n_chunks
@@ -450,25 +532,25 @@ class DataFrameTest < Minitest::Test
   def test_max
     df = Polars::DataFrame.new({"a" => [1, 5, 3], "b" => [4, 2, 6]})
     assert_frame ({"a" => [5], "b" => [6]}), df.max
-    assert_series [4, 5, 6], df.max(axis: 1)
+    assert_series [4, 5, 6], df.max_horizontal
   end
 
   def test_min
     df = Polars::DataFrame.new({"a" => [1, 5, 3], "b" => [4, 2, 6]})
     assert_frame ({"a" => [1], "b" => [2]}), df.min
-    assert_series [1, 2, 3], df.min(axis: 1)
+    assert_series [1, 2, 3], df.min_horizontal
   end
 
   def test_sum
     df = Polars::DataFrame.new({"a" => [1, 2, 3]})
     assert df.sum
-    assert df.sum(axis: 1)
+    assert df.sum_horizontal
   end
 
   def test_mean
     df = Polars::DataFrame.new({"a" => [1, 2, 3]})
     assert df.mean
-    assert df.mean(axis: 1)
+    assert df.mean_horizontal
   end
 
   def test_std
@@ -485,7 +567,7 @@ class DataFrameTest < Minitest::Test
 
   def test_median
     df = Polars::DataFrame.new({"a" => [1, 2, 5], "b" => ["one", "two", "three"]})
-    assert_frame ({"a" => [2], "b" => [nil]}), df.median
+    assert_frame ({"a" => [2], "b" => [nil]}), df.median, check_dtype: false
   end
 
   def test_drop_in_place
@@ -499,5 +581,42 @@ class DataFrameTest < Minitest::Test
   end
 
   def test_null_count
+  end
+
+  def test_count
+    df = Polars::DataFrame.new({"a" => [1, 2, nil]})
+    assert_frame Polars::DataFrame.new({"a" => [2]}), df.select(Polars.col("a").count), check_dtype: false
+    assert_frame Polars::DataFrame.new({"a" => [3]}), df.select(Polars.col("a").len), check_dtype: false
+  end
+
+  def test_replace
+    data = {"a" => [1, 2, 2, 3], "b" => [1.5, 2.5, 5.0, 1.0]}
+    df = Polars::DataFrame.new(data, schema: {"a" => Polars::Int8, "b" => Polars::Float64})
+    expected = Polars::DataFrame.new({"a" => [1, 100, 100, 3]}, schema: {"a" => Polars::Int8})
+    assert_frame expected, df.select(Polars.col("a").replace({2 => 100}))
+    expected = Polars::DataFrame.new({"a" => [1.5, 100.0, 100.0, 1.0]})
+    assert_frame expected, df.select(Polars.col("a").replace({2 => 100}, default: Polars.col("b")))
+  end
+
+  def test_clip
+    df = Polars::DataFrame.new({"a" => [0, 1, 2], "min" => [1, nil, 1]})
+    assert_frame ({"a" => [1, 1, 2]}), df.select(Polars.col("a").clip("min"))
+  end
+
+  def test_pivot
+    df = Polars::DataFrame.new(
+      {
+        "name" => ["Cady", "Cady", "Karen", "Karen"],
+        "subject" => ["maths", "physics", "maths", "physics"],
+        "test_1" => [98, 99, 61, 58],
+        "test_2" => [100, 100, 60, 60]
+      }
+    )
+    df.pivot("subject", index: "name")
+  end
+
+  def test_sample
+    df = Polars::DataFrame.new({a: [1, 2, 3, 4]})
+    assert_equal 2, df.sample(frac: 0.5).height
   end
 end

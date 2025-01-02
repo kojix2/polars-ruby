@@ -17,9 +17,63 @@ macro_rules! set_unwrapped_or_0 {
     };
 }
 
-pub fn arg_sort_by(by: RArray, descending: Vec<bool>) -> RbResult<RbExpr> {
+pub fn rolling_corr(
+    x: &RbExpr,
+    y: &RbExpr,
+    window_size: IdxSize,
+    min_periods: IdxSize,
+    ddof: u8,
+) -> RbExpr {
+    dsl::rolling_corr(
+        x.inner.clone(),
+        y.inner.clone(),
+        RollingCovOptions {
+            min_periods,
+            window_size,
+            ddof,
+        },
+    )
+    .into()
+}
+
+pub fn rolling_cov(
+    x: &RbExpr,
+    y: &RbExpr,
+    window_size: IdxSize,
+    min_periods: IdxSize,
+    ddof: u8,
+) -> RbExpr {
+    dsl::rolling_cov(
+        x.inner.clone(),
+        y.inner.clone(),
+        RollingCovOptions {
+            min_periods,
+            window_size,
+            ddof,
+        },
+    )
+    .into()
+}
+
+pub fn arg_sort_by(
+    by: RArray,
+    descending: Vec<bool>,
+    nulls_last: Vec<bool>,
+    multithreaded: bool,
+    maintain_order: bool,
+) -> RbResult<RbExpr> {
     let by = rb_exprs_to_exprs(by)?;
-    Ok(dsl::arg_sort_by(by, &descending).into())
+    Ok(dsl::arg_sort_by(
+        by,
+        SortMultipleOptions {
+            descending,
+            nulls_last,
+            multithreaded,
+            maintain_order,
+            limit: None,
+        },
+    )
+    .into())
 }
 
 pub fn arg_where(condition: &RbExpr) -> RbExpr {
@@ -41,13 +95,10 @@ pub fn col(name: String) -> RbExpr {
 }
 
 pub fn collect_all(lfs: RArray) -> RbResult<RArray> {
-    let lfs = lfs
-        .each()
-        .map(|v| <&RbLazyFrame>::try_convert(v?))
-        .collect::<RbResult<Vec<&RbLazyFrame>>>()?;
+    let lfs = lfs.typecheck::<Obj<RbLazyFrame>>()?;
 
     Ok(RArray::from_iter(lfs.iter().map(|lf| {
-        let df = lf.ldf.clone().collect().unwrap();
+        let df = lf.ldf.borrow().clone().collect().unwrap();
         RbDataFrame::new(df)
     })))
 }
@@ -65,8 +116,8 @@ pub fn concat_lf(
     let (seq, len) = get_rbseq(lfs)?;
     let mut lfs = Vec::with_capacity(len);
 
-    for res in seq.each() {
-        let item = res?;
+    for res in seq.into_iter() {
+        let item = res;
         let lf = get_lf(item)?;
         lfs.push(lf);
     }
@@ -77,10 +128,58 @@ pub fn concat_lf(
             rechunk,
             parallel,
             to_supertypes,
+            ..Default::default()
         },
     )
     .map_err(RbPolarsErr::from)?;
     Ok(lf.into())
+}
+
+pub fn concat_list(s: RArray) -> RbResult<RbExpr> {
+    let s = rb_exprs_to_exprs(s)?;
+    let expr = dsl::concat_list(s).map_err(RbPolarsErr::from)?;
+    Ok(expr.into())
+}
+
+pub fn concat_str(s: RArray, separator: String, ignore_nulls: bool) -> RbResult<RbExpr> {
+    let s = rb_exprs_to_exprs(s)?;
+    Ok(dsl::concat_str(s, &separator, ignore_nulls).into())
+}
+
+pub fn len() -> RbExpr {
+    dsl::len().into()
+}
+
+pub fn cov(a: &RbExpr, b: &RbExpr, ddof: u8) -> RbExpr {
+    polars::lazy::dsl::cov(a.inner.clone(), b.inner.clone(), ddof).into()
+}
+
+pub fn arctan2(y: &RbExpr, x: &RbExpr) -> RbExpr {
+    y.inner.clone().arctan2(x.inner.clone()).into()
+}
+
+pub fn arctan2d(y: &RbExpr, x: &RbExpr) -> RbExpr {
+    y.inner.clone().arctan2(x.inner.clone()).degrees().into()
+}
+
+pub fn cum_fold(
+    acc: &RbExpr,
+    lambda: Value,
+    exprs: RArray,
+    include_init: bool,
+) -> RbResult<RbExpr> {
+    let exprs = rb_exprs_to_exprs(exprs)?;
+    let lambda = Opaque::from(lambda);
+
+    let func = move |a: Column, b: Column| {
+        binary_lambda(
+            Ruby::get().unwrap().get_inner(lambda),
+            a.take_materialized_series(),
+            b.take_materialized_series(),
+        )
+        .map(|v| v.map(Column::from))
+    };
+    Ok(dsl::cum_fold_exprs(acc.inner.clone(), func, exprs, include_init).into())
 }
 
 pub fn concat_lf_diagonal(
@@ -89,14 +188,9 @@ pub fn concat_lf_diagonal(
     parallel: bool,
     to_supertypes: bool,
 ) -> RbResult<RbLazyFrame> {
-    let iter = lfs.each();
+    let iter = lfs.into_iter();
 
-    let lfs = iter
-        .map(|item| {
-            let item = item?;
-            get_lf(item)
-        })
-        .collect::<RbResult<Vec<_>>>()?;
+    let lfs = iter.map(get_lf).collect::<RbResult<Vec<_>>>()?;
 
     let lf = dsl::functions::concat_lf_diagonal(
         lfs,
@@ -104,10 +198,29 @@ pub fn concat_lf_diagonal(
             rechunk,
             parallel,
             to_supertypes,
+            ..Default::default()
         },
     )
     .map_err(RbPolarsErr::from)?;
     Ok(lf.into())
+}
+
+pub fn dtype_cols(dtypes: RArray) -> RbResult<RbExpr> {
+    let dtypes = dtypes
+        .into_iter()
+        .map(Wrap::<DataType>::try_convert)
+        .collect::<RbResult<Vec<Wrap<DataType>>>>()?;
+    let dtypes = vec_extract_wrapped(dtypes);
+    Ok(dsl::dtype_cols(dtypes).into())
+}
+
+pub fn index_cols(indices: Vec<i64>) -> RbExpr {
+    if indices.len() == 1 {
+        dsl::nth(indices[0])
+    } else {
+        dsl::index_cols(indices)
+    }
+    .into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -146,38 +259,27 @@ pub fn duration(
     dsl::duration(args).into()
 }
 
-pub fn count() -> RbExpr {
-    dsl::count().into()
-}
-
 pub fn first() -> RbExpr {
     dsl::first().into()
-}
-
-pub fn last() -> RbExpr {
-    dsl::last().into()
-}
-
-pub fn dtype_cols(dtypes: Vec<DataType>) -> RbExpr {
-    dsl::dtype_cols(dtypes).into()
 }
 
 pub fn fold(acc: &RbExpr, lambda: Value, exprs: RArray) -> RbResult<RbExpr> {
     let exprs = rb_exprs_to_exprs(exprs)?;
     let lambda = Opaque::from(lambda);
 
-    let func =
-        move |a: Series, b: Series| binary_lambda(Ruby::get().unwrap().get_inner(lambda), a, b);
-    Ok(polars::lazy::dsl::fold_exprs(acc.inner.clone(), func, exprs).into())
+    let func = move |a: Column, b: Column| {
+        binary_lambda(
+            Ruby::get().unwrap().get_inner(lambda),
+            a.take_materialized_series(),
+            b.take_materialized_series(),
+        )
+        .map(|v| v.map(Column::from))
+    };
+    Ok(dsl::fold_exprs(acc.inner.clone(), func, exprs).into())
 }
 
-pub fn cumfold(acc: &RbExpr, lambda: Value, exprs: RArray, include_init: bool) -> RbResult<RbExpr> {
-    let exprs = rb_exprs_to_exprs(exprs)?;
-    let lambda = Opaque::from(lambda);
-
-    let func =
-        move |a: Series, b: Series| binary_lambda(Ruby::get().unwrap().get_inner(lambda), a, b);
-    Ok(polars::lazy::dsl::cumfold_exprs(acc.inner.clone(), func, exprs, include_init).into())
+pub fn last() -> RbExpr {
+    dsl::last().into()
 }
 
 pub fn lit(value: Value, allow_object: bool) -> RbResult<RbExpr> {
@@ -219,6 +321,10 @@ pub fn lit(value: Value, allow_object: bool) -> RbResult<RbExpr> {
     }
 }
 
+pub fn pearson_corr(a: &RbExpr, b: &RbExpr) -> RbExpr {
+    dsl::pearson_corr(a.inner.clone(), b.inner.clone()).into()
+}
+
 pub fn repeat(value: &RbExpr, n: &RbExpr, dtype: Option<Wrap<DataType>>) -> RbResult<RbExpr> {
     let mut value = value.inner.clone();
     let n = n.inner.clone();
@@ -228,7 +334,7 @@ pub fn repeat(value: &RbExpr, n: &RbExpr, dtype: Option<Wrap<DataType>>) -> RbRe
     }
 
     if let Expr::Literal(lv) = &value {
-        let av = lv.to_anyvalue().unwrap();
+        let av = lv.to_any_value().unwrap();
         // Integer inputs that fit in Int32 are parsed as such
         if let DataType::Int64 = av.dtype() {
             let int_value = av.try_extract::<i64>().unwrap();
@@ -240,35 +346,11 @@ pub fn repeat(value: &RbExpr, n: &RbExpr, dtype: Option<Wrap<DataType>>) -> RbRe
     Ok(dsl::repeat(value, n).into())
 }
 
-pub fn pearson_corr(a: &RbExpr, b: &RbExpr, ddof: u8) -> RbExpr {
-    polars::lazy::dsl::pearson_corr(a.inner.clone(), b.inner.clone(), ddof).into()
+pub fn spearman_rank_corr(a: &RbExpr, b: &RbExpr, propagate_nans: bool) -> RbExpr {
+    dsl::spearman_rank_corr(a.inner.clone(), b.inner.clone(), propagate_nans).into()
 }
 
-pub fn spearman_rank_corr(a: &RbExpr, b: &RbExpr, ddof: u8, propagate_nans: bool) -> RbExpr {
-    polars::lazy::dsl::spearman_rank_corr(a.inner.clone(), b.inner.clone(), ddof, propagate_nans)
-        .into()
-}
-
-pub fn cov(a: &RbExpr, b: &RbExpr) -> RbExpr {
-    polars::lazy::dsl::cov(a.inner.clone(), b.inner.clone()).into()
-}
-
-pub fn concat_str(s: RArray, sep: String) -> RbResult<RbExpr> {
-    let s = rb_exprs_to_exprs(s)?;
-    Ok(dsl::concat_str(s, &sep).into())
-}
-
-pub fn concat_lst(s: RArray) -> RbResult<RbExpr> {
-    let s = rb_exprs_to_exprs(s)?;
-    let expr = dsl::concat_list(s).map_err(RbPolarsErr::from)?;
+pub fn sql_expr(sql: String) -> RbResult<RbExpr> {
+    let expr = polars::sql::sql_expr(sql).map_err(RbPolarsErr::from)?;
     Ok(expr.into())
-}
-
-pub fn dtype_cols2(dtypes: RArray) -> RbResult<RbExpr> {
-    let dtypes = dtypes
-        .each()
-        .map(|v| Wrap::<DataType>::try_convert(v?))
-        .collect::<RbResult<Vec<Wrap<DataType>>>>()?;
-    let dtypes = vec_extract_wrapped(dtypes);
-    Ok(crate::functions::lazy::dtype_cols(dtypes))
 }

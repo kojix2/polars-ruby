@@ -1,9 +1,29 @@
 use crate::error::RbPolarsErr;
 use crate::prelude::*;
-use crate::{RbResult, RbSeries, RbValueError};
+use crate::{RbResult, RbSeries};
 use magnus::{IntoValue, Value};
 
 impl RbSeries {
+    pub fn any(&self, ignore_nulls: bool) -> RbResult<Option<bool>> {
+        let binding = self.series.borrow();
+        let s = binding.bool().map_err(RbPolarsErr::from)?;
+        Ok(if ignore_nulls {
+            Some(s.any())
+        } else {
+            s.any_kleene()
+        })
+    }
+
+    pub fn all(&self, ignore_nulls: bool) -> RbResult<Option<bool>> {
+        let binding = self.series.borrow();
+        let s = binding.bool().map_err(RbPolarsErr::from)?;
+        Ok(if ignore_nulls {
+            Some(s.all())
+        } else {
+            s.all_kleene()
+        })
+    }
+
     pub fn arg_max(&self) -> Option<usize> {
         self.series.borrow().arg_max()
     }
@@ -16,30 +36,54 @@ impl RbSeries {
         Ok(Wrap(
             self.series
                 .borrow()
-                .max_as_series()
-                .get(0)
-                .map_err(RbPolarsErr::from)?,
+                .max_reduce()
+                .map_err(RbPolarsErr::from)?
+                .as_any_value(),
         )
         .into_value())
     }
 
-    pub fn mean(&self) -> Option<f64> {
+    pub fn mean(&self) -> RbResult<Value> {
         match self.series.borrow().dtype() {
-            DataType::Boolean => {
-                let s = self.series.borrow().cast(&DataType::UInt8).unwrap();
-                s.mean()
+            DataType::Boolean => Ok(Wrap(
+                self.series
+                    .borrow()
+                    .cast(&DataType::UInt8)
+                    .unwrap()
+                    .mean_reduce()
+                    .as_any_value(),
+            )
+            .into_value()),
+            // For non-numeric output types we require mean_reduce.
+            dt if dt.is_temporal() => {
+                Ok(Wrap(self.series.borrow().mean_reduce().as_any_value()).into_value())
             }
-            _ => self.series.borrow().mean(),
+            _ => Ok(self.series.borrow().mean().into_value()),
         }
     }
 
-    pub fn median(&self) -> Option<f64> {
+    pub fn median(&self) -> RbResult<Value> {
         match self.series.borrow().dtype() {
-            DataType::Boolean => {
-                let s = self.series.borrow().cast(&DataType::UInt8).unwrap();
-                s.median()
-            }
-            _ => self.series.borrow().median(),
+            DataType::Boolean => Ok(Wrap(
+                self.series
+                    .borrow()
+                    .cast(&DataType::UInt8)
+                    .unwrap()
+                    .median_reduce()
+                    .map_err(RbPolarsErr::from)?
+                    .as_any_value(),
+            )
+            .into_value()),
+            // For non-numeric output types we require median_reduce.
+            dt if dt.is_temporal() => Ok(Wrap(
+                self.series
+                    .borrow()
+                    .median_reduce()
+                    .map_err(RbPolarsErr::from)?
+                    .as_any_value(),
+            )
+            .into_value()),
+            _ => Ok(self.series.borrow().median().into_value()),
         }
     }
 
@@ -47,36 +91,30 @@ impl RbSeries {
         Ok(Wrap(
             self.series
                 .borrow()
-                .min_as_series()
-                .get(0)
-                .map_err(RbPolarsErr::from)?,
+                .min_reduce()
+                .map_err(RbPolarsErr::from)?
+                .as_any_value(),
         )
         .into_value())
     }
 
-    pub fn quantile(
-        &self,
-        quantile: f64,
-        interpolation: Wrap<QuantileInterpolOptions>,
-    ) -> RbResult<Value> {
-        Ok(Wrap(
-            self.series
-                .borrow()
-                .quantile_as_series(quantile, interpolation.0)
-                .map_err(|_| RbValueError::new_err("invalid quantile".into()))?
-                .get(0)
-                .unwrap_or(AnyValue::Null),
-        )
-        .into_value())
+    pub fn quantile(&self, quantile: f64, interpolation: Wrap<QuantileMethod>) -> RbResult<Value> {
+        let bind = self
+            .series
+            .borrow()
+            .quantile_reduce(quantile, interpolation.0);
+        let sc = bind.map_err(RbPolarsErr::from)?;
+
+        Ok(Wrap(sc.as_any_value()).into_value())
     }
 
     pub fn sum(&self) -> RbResult<Value> {
         Ok(Wrap(
             self.series
                 .borrow()
-                .sum_as_series()
-                .get(0)
-                .map_err(RbPolarsErr::from)?,
+                .sum_reduce()
+                .map_err(RbPolarsErr::from)?
+                .as_any_value(),
         )
         .into_value())
     }

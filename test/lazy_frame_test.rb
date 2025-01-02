@@ -3,7 +3,7 @@ require_relative "test_helper"
 class LazyFrameTest < Minitest::Test
   def test_to_s
     df = Polars::DataFrame.new({"a" => [1, 2, 3]}).lazy
-    assert_match "naive plan:", df.select("foo").to_s
+    assert_match "naive plan:", df.select("a").to_s
   end
 
   def test_select
@@ -60,7 +60,7 @@ class LazyFrameTest < Minitest::Test
       })
       .lazy
       .select(
-        Polars.pearson_corr("a", "b")
+        Polars.corr("a", "b", method: "pearson")
       )
       .collect
     assert_in_delta 0.989778, df["a"][0]
@@ -68,7 +68,7 @@ class LazyFrameTest < Minitest::Test
 
   def test_describe_optimized_plan
     df = Polars::DataFrame.new({"a" => [1, 2, 3]}).lazy
-    assert_match "FAST_PROJECT", df.select("a").describe_optimized_plan
+    assert_match "PROJECT", df.select("a").describe_optimized_plan
   end
 
   def test_concat

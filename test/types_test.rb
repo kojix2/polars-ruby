@@ -3,7 +3,7 @@ require_relative "test_helper"
 class TypesTest < Minitest::Test
   def test_dtypes
     df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
-    assert_equal [Polars::Int64, Polars::Utf8], df.dtypes
+    assert_equal [Polars::Int64, Polars::String], df.dtypes
   end
 
   def test_dtypes_hashes
@@ -26,9 +26,8 @@ class TypesTest < Minitest::Test
     assert_equal Polars::Boolean, schema["b"]
     assert_equal Polars::Int64, schema["i"]
     assert_equal Polars::Float64, schema["f"]
-    # TODO fix
-    assert_equal Polars::Float64, schema["c"]
-    assert_equal Polars::Utf8, schema["s"]
+    assert_equal Polars::Decimal, schema["c"]
+    assert_equal Polars::String, schema["s"]
     assert_equal Polars::Binary, schema["n"]
     assert_equal Polars::Date, schema["d"]
     assert_equal Polars::Datetime.new("ns"), schema["t"]
@@ -71,8 +70,8 @@ class TypesTest < Minitest::Test
   end
 
   def test_series_dtype_utf8
-    s = Polars::Series.new(["a", nil, "c"], dtype: Polars::Utf8)
-    assert_series ["a", nil, "c"], s, dtype: Polars::Utf8
+    s = Polars::Series.new(["a", nil, "c"], dtype: Polars::String)
+    assert_series ["a", nil, "c"], s, dtype: Polars::String
     assert_equal [Encoding::UTF_8, nil, Encoding::UTF_8], s.to_a.map { |v| v&.encoding }
     assert_equal Encoding::UTF_8, s[0].encoding
   end
@@ -98,6 +97,13 @@ class TypesTest < Minitest::Test
   def test_series_dtype_datetime_time_unit
     s = Polars::Series.new([DateTime.new(2022, 1, 1)], dtype: Polars::Datetime.new("ms"))
     assert_series [Time.utc(2022, 1, 1)], s, dtype: Polars::Datetime.new("ms")
+  end
+
+  def test_series_dtype_datetime_time_zone
+    s = Polars::Series.new([Time.utc(2020, 1, 1)], dtype: Polars::Datetime.new("us", "Europe/Amsterdam"))
+    assert_equal Polars::Datetime.new("us", "Europe/Amsterdam"), s.dtype
+    # TODO fix
+    # assert_series [Time.utc(2020, 1, 1)], s, dtype: Polars::Datetime.new("us", "Europe/Amsterdam")
   end
 
   def test_series_dtype_duration
@@ -146,7 +152,7 @@ class TypesTest < Minitest::Test
     error = assert_raises do
       Polars::Series.new([[1, 2], [3, 4]], dtype: Polars::Array.new(3, Polars::Int64))
     end
-    assert_equal "incompatible offsets in source list", error.message
+    assert_equal "not all elements have the specified width 3", error.message
   end
 
   def test_series_dtype_struct
@@ -176,6 +182,43 @@ class TypesTest < Minitest::Test
 
   def test_series_dtype_unknown_utf8
     s = Polars::Series.new(["a", "b", "c"], dtype: Polars::Unknown)
-    assert_series ["a", "b", "c"], s, dtype: Polars::Utf8
+    assert_series ["a", "b", "c"], s, dtype: Polars::String
+  end
+
+  def test_object
+    s = Polars::Series.new([Object.new])
+    GC.start
+    # TODO fix
+    # assert s.inspect
+    assert s.to_a
+
+    df = Polars::DataFrame.new({a: [Object.new]})
+    GC.start
+    # TODO fix
+    # assert df.inspect
+    assert df.to_a
+  end
+
+  def test_bigdecimal
+    assert_bigdecimal "1e-2", "0.01", 2
+    assert_bigdecimal "1e-1", "0.1", 1
+    assert_bigdecimal "1e0", "1", 0
+    assert_bigdecimal "1e1", "10", 0
+    assert_bigdecimal "1e2", "100", 0
+  end
+
+  def assert_bigdecimal(v, exp, scale)
+    b = BigDecimal(v)
+
+    s = Polars::Series.new([b])
+    assert_match "\t#{exp}\n", s.inspect
+    assert_equal b, s.to_a[0]
+    assert_equal b, s[0]
+    assert_equal scale, s.dtype.scale
+
+    df = Polars::DataFrame.new([{a: b}])
+    assert_match "│ #{exp} ", df.inspect
+    assert_equal b, df.to_a[0]["a"]
+    assert_equal scale, df.schema["a"].scale
   end
 end
