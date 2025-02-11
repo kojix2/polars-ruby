@@ -10,6 +10,56 @@ module Polars
       self._s = series._s
     end
 
+    # Evaluate whether all boolean values in a list are true.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new(
+    #     [[true, true], [false, true], [false, false], [nil], [], nil],
+    #     dtype: Polars::List.new(Polars::Boolean)
+    #   )
+    #   s.list.all
+    #   # =>
+    #   # shape: (6,)
+    #   # Series: '' [bool]
+    #   # [
+    #   #         true
+    #   #         false
+    #   #         false
+    #   #         true
+    #   #         true
+    #   #         null
+    #   # ]
+    def all
+      super
+    end
+
+    # Evaluate whether any boolean value in a list is true.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new(
+    #     [[true, true], [false, true], [false, false], [nil], [], nil],
+    #     dtype: Polars::List.new(Polars::Boolean)
+    #   )
+    #   s.list.any
+    #   # =>
+    #   # shape: (6,)
+    #   # Series: '' [bool]
+    #   # [
+    #   #         true
+    #   #         true
+    #   #         false
+    #   #         false
+    #   #         false
+    #   #         null
+    #   # ]
+    def any
+      super
+    end
+
     # Get the length of the arrays as UInt32.
     #
     # @return [Series]
@@ -28,9 +78,72 @@ module Polars
       super
     end
 
+    # Drop all null values in the list.
+    #
+    # The original order of the remaining elements is preserved.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("values", [[nil, 1, nil, 2], [nil], [3, 4]])
+    #   s.list.drop_nulls
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'values' [list[i64]]
+    #   # [
+    #   #         [1, 2]
+    #   #         []
+    #   #         [3, 4]
+    #   # ]
+    def drop_nulls
+      super
+    end
+
+    # Sample from this list.
+    #
+    # @param n [Integer]
+    #   Number of items to return. Cannot be used with `fraction`. Defaults to 1 if
+    #   `fraction` is nil.
+    # @param fraction [Float]
+    #   Fraction of items to return. Cannot be used with `n`.
+    # @param with_replacement [Boolean]
+    #   Allow values to be sampled more than once.
+    # @param shuffle [Boolean]
+    #   Shuffle the order of sampled data points.
+    # @param seed [Integer]
+    #   Seed for the random number generator. If set to nil (default), a
+    #   random seed is generated for each sample operation.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("values", [[1, 2, 3], [4, 5]])
+    #   s.list.sample(n: Polars::Series.new("n", [2, 1]), seed: 1)
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'values' [list[i64]]
+    #   # [
+    #   #         [2, 1]
+    #   #         [5]
+    #   # ]
+    def sample(n: nil, fraction: nil, with_replacement: false, shuffle: false, seed: nil)
+      super
+    end
+
     # Sum all the arrays in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("values", [[1], [2, 3]])
+    #   s.list.sum
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'values' [i64]
+    #   # [
+    #   #         1
+    #   #         5
+    #   # ]
     def sum
       super
     end
@@ -38,6 +151,17 @@ module Polars
     # Compute the max value of the arrays in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("values", [[4, 1], [2, 3]])
+    #   s.list.max
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'values' [i64]
+    #   # [
+    #   #         4
+    #   #         3
+    #   # ]
     def max
       super
     end
@@ -45,6 +169,17 @@ module Polars
     # Compute the min value of the arrays in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("values", [[4, 1], [2, 3]])
+    #   s.list.min
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'values' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   # ]
     def min
       super
     end
@@ -52,6 +187,17 @@ module Polars
     # Compute the mean value of the arrays in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("values", [[3, 1], [3, 3]])
+    #   s.list.mean
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'values' [f64]
+    #   # [
+    #   #         2.0
+    #   #         3.0
+    #   # ]
     def mean
       super
     end
@@ -59,6 +205,27 @@ module Polars
     # Sort the arrays in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[3, 2, 1], [9, 1, 2]])
+    #   s.list.sort
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [list[i64]]
+    #   # [
+    #   #         [1, 2, 3]
+    #   #         [1, 2, 9]
+    #   # ]
+    #
+    # @example
+    #   s.list.sort(reverse: true)
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [list[i64]]
+    #   # [
+    #   #         [3, 2, 1]
+    #   #         [9, 2, 1]
+    #   # ]
     def sort(reverse: false)
       super
     end
@@ -66,6 +233,17 @@ module Polars
     # Reverse the arrays in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[3, 2, 1], [9, 1, 2]])
+    #   s.list.reverse
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [list[i64]]
+    #   # [
+    #   #         [1, 2, 3]
+    #   #         [2, 1, 9]
+    #   # ]
     def reverse
       super
     end
@@ -73,6 +251,17 @@ module Polars
     # Get the unique/distinct values in the list.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[1, 1, 2], [2, 3, 3]])
+    #   s.list.unique()
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [list[i64]]
+    #   # [
+    #   #         [1, 2]
+    #   #         [2, 3]
+    #   # ]
     def unique
       super
     end
@@ -83,6 +272,18 @@ module Polars
     #   Columns to concat into a List Series
     #
     # @return [Series]
+    #
+    # @example
+    #   s1 = Polars::Series.new("a", [["a", "b"], ["c"]])
+    #   s2 = Polars::Series.new("b", [["c"], ["d", nil]])
+    #   s1.list.concat(s2)
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [list[str]]
+    #   # [
+    #   #         ["a", "b", "c"]
+    #   #         ["c", "d", null]
+    #   # ]
     def concat(other)
       super
     end
@@ -95,9 +296,25 @@ module Polars
     #
     # @param index [Integer]
     #   Index to return per sublist
+    # @param null_on_oob [Boolean]
+    #   Behavior if an index is out of bounds:
+    #   true -> set as null
+    #   false -> raise an error
     #
     # @return [Series]
-    def get(index)
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[3, 2, 1], [], [1, 2]])
+    #   s.list.get(0, null_on_oob: true)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         3
+    #   #         null
+    #   #         1
+    #   # ]
+    def get(index, null_on_oob: false)
       super
     end
 
@@ -134,6 +351,18 @@ module Polars
     # Get the first value of the sublists.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[3, 2, 1], [], [1, 2]])
+    #   s.list.first
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         3
+    #   #         null
+    #   #         1
+    #   # ]
     def first
       super
     end
@@ -141,6 +370,18 @@ module Polars
     # Get the last value of the sublists.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[3, 2, 1], [], [1, 2]])
+    #   s.list.last
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         1
+    #   #         null
+    #   #         2
+    #   # ]
     def last
       super
     end
@@ -151,6 +392,18 @@ module Polars
     #   Item that will be checked for membership.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[3, 2, 1], [], [1, 2]])
+    #   s.list.contains(1)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [bool]
+    #   # [
+    #   #         true
+    #   #         false
+    #   #         true
+    #   # ]
     def contains(item)
       super
     end
@@ -158,6 +411,17 @@ module Polars
     # Retrieve the index of the minimal value in every sublist.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[1, 2], [2, 1]])
+    #   s.list.arg_min
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [u32]
+    #   # [
+    #   #         0
+    #   #         1
+    #   # ]
     def arg_min
       super
     end
@@ -165,6 +429,17 @@ module Polars
     # Retrieve the index of the maximum value in every sublist.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [[1, 2], [2, 1]])
+    #   s.list.arg_max
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'a' [u32]
+    #   # [
+    #   #         1
+    #   #         0
+    #   # ]
     def arg_max
       super
     end

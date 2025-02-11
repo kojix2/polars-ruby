@@ -37,6 +37,10 @@ class DocsTest < Minitest::Test
     assert_docs Polars::DataFrame
   end
 
+  def test_data_types
+    assert_docs Polars::DataType
+  end
+
   def test_date_time_expr
     assert_docs Polars::DateTimeExpr
   end
@@ -65,10 +69,6 @@ class DocsTest < Minitest::Test
     assert_docs Polars::LazyFrame
   end
 
-  def test_lazy_functions
-    assert_docs Polars::LazyFunctions
-  end
-
   def test_lazy_group_by
     assert_docs Polars::LazyGroupBy
   end
@@ -87,6 +87,10 @@ class DocsTest < Minitest::Test
 
   def test_name_expr
     assert_docs Polars::NameExpr
+  end
+
+  def test_selectors
+    assert_docs Polars::Selectors
   end
 
   def test_series
@@ -113,6 +117,10 @@ class DocsTest < Minitest::Test
     assert_docs Polars::StructNameSpace
   end
 
+  def test_testing
+    assert_docs Polars::Testing
+  end
+
   def assert_docs(cls)
     @@once ||= begin
       require "yard"
@@ -128,9 +136,23 @@ class DocsTest < Minitest::Test
           raise "Missing docs (#{method.name})"
         end
 
+        assert_params(method)
         assert_return(method)
         assert_examples(method, cls)
       end
+    end
+  end
+
+  def assert_params(method)
+    actual = method.tags(:param).map(&:name)
+    expected = method.parameters.map(&:first).map { |v| v.gsub("*", "").gsub(":", "") }.reject { |v| v.start_with?("&") }
+    missing = expected - actual
+    extra = actual - expected
+    if missing.any? && actual.any?
+      # puts "Missing @param tags (#{method}) #{missing}"
+    end
+    if extra.any? && expected.any?
+      # puts "Extra @param tags (#{method}) #{extra}"
     end
   end
 
@@ -142,10 +164,17 @@ class DocsTest < Minitest::Test
 
   def assert_examples(method, cls)
     # requires files
-    return if [:read_csv_batched, :sink_parquet].include?(method.name)
+    return if [:read_csv_batched, :sink_parquet, :sink_ipc, :sink_csv, :sink_ndjson].include?(method.name)
 
-    # TODO fix
-    return if [:align_frames, :coalesce, :cumsum].include?(method.name)
+    # requires nightly
+    return if [:to_titlecase].include?(method.name)
+
+    # yard global
+    return if [:log].include?(method.name)
+
+    if ENV["EXAMPLES"] && missing_examples?(method, cls)
+      warn "Missing examples (#{method})"
+    end
 
     code = ""
     method.tags(:example).each do |example|
@@ -168,10 +197,13 @@ class DocsTest < Minitest::Test
         end
 
         # non-deterministic output
-        next if [:sort, :sample, :mode, :duration, :_hash, :hash_rows, :flatten, :value_counts].include?(method.name)
+        next if [:sort, :mode, :duration, :_hash, :hash_rows, :flatten, :value_counts, :agg, :top_k, :bottom_k].include?(method.name)
 
         # check output
         lines = code.split("\n")
+        if RUBY_VERSION.to_f >= 3.4
+          output = output.gsub(" => ", "=>")
+        end
         if lines.last.start_with?("# => ")
           expected = lines.last[5..]
           assert_equal expected, output, "Example output (#{method.name})"
@@ -189,5 +221,13 @@ class DocsTest < Minitest::Test
         raise "Example failed (#{method.name}): #{e.message}"
       end
     end
+  end
+
+  def missing_examples?(method, cls)
+    method.tags(:example).empty? &&
+    ![Polars::Config, Polars::IO, Polars::Testing, Polars::DataType, Polars::SQLContext].include?(cls) &&
+    method.name.match?(/\A[a-z]/i) &&
+    ![:inspect, :to_s, :plot, :list, :arr, :bin, :cat, :dt, :meta, :name, :str, :struct, :initialize, :set_random_seed, :col].include?(method.name) &&
+    !method.name.start_with?("write_")
   end
 end

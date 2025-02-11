@@ -1,24 +1,122 @@
 module Polars
   # Base class for all Polars data types.
   class DataType
+    # Return this DataType's fundamental/root type class.
+    #
+    # @return [Class]
+    #
+    # @example
+    #   Polars::Datetime.new("ns").base_type
+    #   # => Polars::Datetime
+    # @example
+    #   Polars::List.new(Polars::Int32).base_type
+    #   # => Polars::List
+    # @example
+    #   Polars::Struct.new([Polars::Field.new("a", Polars::Int64), Polars::Field.new("b", Polars::Boolean)]).base_type
+    #   # => Polars::Struct
     def self.base_type
       self
     end
 
+    # Return this DataType's fundamental/root type class.
+    #
+    # @return [Class]
     def base_type
       is_a?(DataType) ? self.class : self
     end
 
-    def self.nested?
-      false
-    end
-
-    def nested?
-      self.class.nested?
-    end
-
+    # Check if this DataType is the same as another DataType.
+    #
+    # @return [Boolean]
     def self.==(other)
       eql?(other) || other.is_a?(self)
+    end
+
+    # Check if this DataType is the same as another DataType.
+    #
+    # @return [Boolean]
+    def ==(other)
+      if other.is_a?(Class)
+        is_a?(other)
+      else
+        other.instance_of?(self.class)
+      end
+    end
+
+    # Check whether the data type is a numeric type.
+    #
+    # @return [Boolean]
+    def self.numeric?
+      self < NumericType
+    end
+
+    # Check whether the data type is a decimal type.
+    #
+    # @return [Boolean]
+    def self.decimal?
+      self == Decimal
+    end
+
+    # Check whether the data type is an integer type.
+    #
+    # @return [Boolean]
+    def self.integer?
+      self < IntegerType
+    end
+
+    # Check whether the data type is a signed integer type.
+    #
+    # @return [Boolean]
+    def self.signed_integer?
+      self < SignedIntegerType
+    end
+
+    # Check whether the data type is an unsigned integer type.
+    #
+    # @return [Boolean]
+    def self.unsigned_integer?
+      self < UnsignedIntegerType
+    end
+
+    # Check whether the data type is a float type.
+    #
+    # @return [Boolean]
+    def self.float?
+      self < FloatType
+    end
+
+    # Check whether the data type is a temporal type.
+    #
+    # @return [Boolean]
+    def self.temporal?
+      self < TemporalType
+    end
+
+    # Check whether the data type is a nested type.
+    #
+    # @return [Boolean]
+    def self.nested?
+      self < NestedType
+    end
+
+    [:numeric?, :decimal?, :integer?, :signed_integer?, :unsigned_integer?, :float?, :temporal?, :nested?].each do |v|
+      define_method(v) do
+        self.class.public_send(v)
+      end
+    end
+
+    # Returns a string representing the data type.
+    #
+    # @return [String]
+    def to_s
+      self.class.name
+    end
+
+    # Returns a string representing the data type.
+    #
+    # @return [String]
+    def inspect
+      to_s
     end
   end
 
@@ -27,15 +125,22 @@ module Polars
   end
 
   # Base class for integral data types.
-  class IntegralType < NumericType
+  class IntegerType < NumericType
   end
 
-  # Base class for fractional data types.
-  class FractionalType < NumericType
+  # @private
+  IntegralType = IntegerType
+
+  # Base class for signed integer data types.
+  class SignedIntegerType < IntegerType
+  end
+
+  # Base class for unsigned integer data types.
+  class UnsignedIntegerType < IntegerType
   end
 
   # Base class for float data types.
-  class FloatType < FractionalType
+  class FloatType < NumericType
   end
 
   # Base class for temporal data types.
@@ -44,41 +149,42 @@ module Polars
 
   # Base class for nested data types.
   class NestedType < DataType
-    def self.nested?
-      true
-    end
   end
 
   # 8-bit signed integer type.
-  class Int8 < IntegralType
+  class Int8 < SignedIntegerType
   end
 
   # 16-bit signed integer type.
-  class Int16 < IntegralType
+  class Int16 < SignedIntegerType
   end
 
   # 32-bit signed integer type.
-  class Int32 < IntegralType
+  class Int32 < SignedIntegerType
   end
 
   # 64-bit signed integer type.
-  class Int64 < IntegralType
+  class Int64 < SignedIntegerType
+  end
+
+  # 128-bit signed integer type.
+  class Int128 < SignedIntegerType
   end
 
   # 8-bit unsigned integer type.
-  class UInt8 < IntegralType
+  class UInt8 < UnsignedIntegerType
   end
 
   # 16-bit unsigned integer type.
-  class UInt16 < IntegralType
+  class UInt16 < UnsignedIntegerType
   end
 
   # 32-bit unsigned integer type.
-  class UInt32 < IntegralType
+  class UInt32 < UnsignedIntegerType
   end
 
   # 64-bit unsigned integer type.
-  class UInt64 < IntegralType
+  class UInt64 < UnsignedIntegerType
   end
 
   # 32-bit floating point type.
@@ -92,7 +198,7 @@ module Polars
   # Decimal 128-bit type with an optional precision and non-negative scale.
   #
   # NOTE: this is an experimental work-in-progress feature and may not work as expected.
-  class Decimal < FractionalType
+  class Decimal < NumericType
     attr_reader :precision, :scale
 
     def initialize(precision, scale)
@@ -120,8 +226,12 @@ module Polars
   end
 
   # UTF-8 encoded string type.
-  class Utf8 < DataType
+  class String < DataType
   end
+
+  # @private
+  # Allow Utf8 as an alias for String
+  Utf8 = String
 
   # Binary type.
   class Binary < DataType
@@ -186,6 +296,61 @@ module Polars
 
   # A categorical encoding of a set of strings.
   class Categorical < DataType
+    attr_reader :ordering
+
+    def initialize(ordering = "physical")
+      @ordering = ordering
+    end
+  end
+
+  # A fixed set categorical encoding of a set of strings.
+  #
+  # NOTE: this is an experimental work-in-progress feature and may not work as expected.
+  class Enum < DataType
+    attr_reader :categories
+
+    def initialize(categories)
+      if !categories.is_a?(Series)
+        categories = Series.new(categories)
+      end
+
+      if categories.empty?
+        @categories = Series.new("category", [], dtype: String)
+        return
+      end
+
+      if categories.null_count > 0
+        msg = "Enum categories must not contain null values"
+        raise TypeError, msg
+      end
+
+      if (dtype = categories.dtype) != String
+        msg = "Enum categories must be strings; found data of type #{dtype}"
+        raise TypeError, msg
+      end
+
+      if categories.n_unique != categories.len
+        duplicate = categories.filter(categories.is_duplicated)[0]
+        msg = "Enum categories must be unique; found duplicate #{duplicate}"
+        raise ArgumentError, msg
+      end
+
+      @categories = categories.rechunk.alias("category")
+    end
+
+    def ==(other)
+      if other.eql?(Enum)
+        true
+      elsif other.is_a?(Enum)
+        categories == other.categories
+      else
+        false
+      end
+    end
+
+    def to_s
+      "#{self.class.name}(categories: #{categories.to_a.inspect})"
+    end
   end
 
   # Type for wrapping arbitrary Ruby objects.
@@ -225,27 +390,34 @@ module Polars
 
   # Nested list/array type.
   class Array < NestedType
-    attr_reader :width, :inner
+    attr_reader :inner, :width
 
-    def initialize(width, inner = nil)
-      @width = width
+    def initialize(inner, width)
+      if width.is_a?(DataType) || (width.is_a?(Class) && width < DataType)
+        inner, width = width, inner
+      end
       @inner = Utils.rb_type_to_dtype(inner) if inner
+      @width = width
     end
 
-    # TODO check width?
     def ==(other)
       if other.eql?(Array)
         true
       elsif other.is_a?(Array)
-        @inner.nil? || other.inner.nil? || @inner == other.inner
+        if @width != other.width
+          false
+        elsif @inner.nil? || other.inner.nil?
+          true
+        else
+          @inner == other.inner
+        end
       else
         false
       end
     end
 
-    # TODO add width?
     def to_s
-      "#{self.class.name}(#{inner})"
+      "#{self.class.name}(#{inner}, width: #{width.inspect})"
     end
   end
 
@@ -290,7 +462,7 @@ module Polars
     end
 
     def to_s
-      "#{self.class.name}([#{fields.map(&:to_s).join("\n")}])"
+      "#{self.class.name}(#{fields.to_h { |f| [f.name, f.dtype] }})"
     end
 
     def to_schema

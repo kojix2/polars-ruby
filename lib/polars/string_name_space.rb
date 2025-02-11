@@ -83,7 +83,7 @@ module Polars
       strict: true,
       exact: true,
       cache: true,
-      use_earliest: nil
+      ambiguous: "raise"
     )
       super
     end
@@ -233,11 +233,26 @@ module Polars
     # @return [Series]
     #
     # @example
-    #   Polars::Series.new([1, nil, 2]).str.concat("-")[0]
-    #   # => "1-null-2"
-    def concat(delimiter = "-")
+    #   Polars::Series.new([1, nil, 2]).str.join("-")
+    #   # =>
+    #   # shape: (1,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         "1-2"
+    #   # ]
+    #
+    # @example
+    #   Polars::Series.new([1, nil, 2]).str.join("-", ignore_nulls: false)
+    #   # =>
+    #   # shape: (1,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         null
+    #   # ]
+    def join(delimiter = "-", ignore_nulls: true)
       super
     end
+    alias_method :concat, :join
 
     # Check if strings in Series contain a substring that matches a regex.
     #
@@ -339,8 +354,8 @@ module Polars
     #   # shape: (3,)
     #   # Series: '' [binary]
     #   # [
-    #   #         [binary data]
-    #   #         [binary data]
+    #   #         b"foo"
+    #   #         b"bar"
     #   #         null
     #   # ]
     def decode(encoding, strict: false)
@@ -643,7 +658,18 @@ module Polars
     #   An optional single character that should be trimmed
     #
     # @return [Series]
-    def strip(matches = nil)
+    #
+    # @example
+    #   s = Polars::Series.new([" hello ", "\tworld"])
+    #   s.str.strip_chars
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         "hello"
+    #   #         "world"
+    #   # ]
+    def strip_chars(matches = nil)
       super
     end
 
@@ -653,9 +679,21 @@ module Polars
     #   An optional single character that should be trimmed
     #
     # @return [Series]
-    def lstrip(matches = nil)
+    #
+    # @example
+    #   s = Polars::Series.new([" hello ", "\tworld"])
+    #   s.str.strip_chars_start
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         "hello "
+    #   #         "world"
+    #   # ]
+    def strip_chars_start(matches = nil)
       super
     end
+    alias_method :lstrip, :strip_chars_start
 
     # Remove trailing whitespace.
     #
@@ -663,9 +701,21 @@ module Polars
     #   An optional single character that should be trimmed
     #
     # @return [Series]
-    def rstrip(matches = nil)
+    #
+    # @example
+    #   s = Polars::Series.new([" hello ", "world\t"])
+    #   s.str.strip_chars_end
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         " hello"
+    #   #         "world"
+    #   # ]
+    def strip_chars_end(matches = nil)
       super
     end
+    alias_method :rstrip, :strip_chars_end
 
     # Fills the string with zeroes.
     #
@@ -676,11 +726,24 @@ module Polars
     # sign character rather than before. The original string is returned if width is
     # less than or equal to `s.length`.
     #
-    # @param alignment [Integer]
+    # @param length [Integer]
     #   Fill the value up to this length.
     #
     # @return [Series]
-    def zfill(alignment)
+    #
+    # @example
+    #   s = Polars::Series.new([-1, 123, 999999, nil])
+    #   s.cast(Polars::String).str.zfill(4)
+    #   # =>
+    #   # shape: (4,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         "-001"
+    #   #         "0123"
+    #   #         "999999"
+    #   #         null
+    #   # ]
+    def zfill(length)
       super
     end
 
@@ -743,6 +806,17 @@ module Polars
     # Modify the strings to their lowercase equivalent.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("foo", ["CAT", "DOG"])
+    #   s.str.to_lowercase
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'foo' [str]
+    #   # [
+    #   #         "cat"
+    #   #         "dog"
+    #   # ]
     def to_lowercase
       super
     end
@@ -750,6 +824,17 @@ module Polars
     # Modify the strings to their uppercase equivalent.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("foo", ["cat", "dog"])
+    #   s.str.to_uppercase
+    #   # =>
+    #   # shape: (2,)
+    #   # Series: 'foo' [str]
+    #   # [
+    #   #         "CAT"
+    #   #         "DOG"
+    #   # ]
     def to_uppercase
       super
     end

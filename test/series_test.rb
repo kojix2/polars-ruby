@@ -13,7 +13,7 @@ class SeriesTest < Minitest::Test
 
   def test_new_string
     s = Polars::Series.new(["a", "b", "c"])
-    assert_series ["a", "b", "c"], s, dtype: Polars::Utf8
+    assert_series ["a", "b", "c"], s, dtype: Polars::String
   end
 
   def test_new_binary
@@ -84,15 +84,36 @@ class SeriesTest < Minitest::Test
 
   def test_new_list_of_structs
     s = Polars::Series.new([[{}], [{}], [{}]])
-    assert_series [[{"" => nil}], [{"" => nil}], [{"" => nil}]], s, dtype: Polars::List
+    assert_series [[{}], [{}], [{}]], s, dtype: Polars::List
   end
 
   def test_new_strict
     s = Polars::Series.new([1.0, "hello", 3], strict: false)
-    assert_series [1, nil, 3], s, dtype: Polars::Float64
+    assert_series ["1.0", "hello", "3"], s, dtype: Polars::String
 
     s = Polars::Series.new([1, "hello", 3.5], strict: false)
-    assert_series [1, nil, 3.5], s, dtype: Polars::Float64
+    assert_series ["1", "hello", "3.5"], s, dtype: Polars::String
+
+    # TODO fix
+    # error = assert_raises(TypeError) do
+    #   Polars::Series.new([1, 2, 3.5])
+    # end
+    # assert_equals "", error.message
+
+    s = Polars::Series.new([1, 2, 3.5], strict: false)
+    assert_series [1, 2, 3.5], s, dtype: Polars::Float64
+
+    s = Polars::Series.new(["1", "2", "3.5"], strict: false, dtype: Polars::Float64)
+    assert_series [1, 2, 3.5], s, dtype: Polars::Float64
+
+    s = Polars::Series.new([1, 2, 3.5], strict: false, dtype: Polars::Int8)
+    assert_series [1, 2, 3], s, dtype: Polars::Int8
+  end
+
+  def test_new_enum
+    dtype = Polars::Enum.new(["a", "b"])
+    s = Polars::Series.new([nil, "a", "b"], dtype: dtype)
+    assert_series [nil, "a", "b"], s, dtype: dtype
   end
 
   def test_new_bigdecimal
@@ -133,7 +154,7 @@ class SeriesTest < Minitest::Test
     error = assert_raises(TypeError) do
       Polars::Series.new([1, "hello", true])
     end
-    assert_equal "no implicit conversion of String into Integer", error.message
+    assert_match "unexpected value while building Series of type Int64; found value of type String", error.message
   end
 
   def test_new_range
@@ -170,8 +191,10 @@ class SeriesTest < Minitest::Test
   end
 
   def test_dtype
-    s = Polars::Series.new([1, 2, 3])
-    assert_equal Polars::Int64, s.dtype
+    s = Polars::Series.new([1, 2, 3], dtype: Polars::Int8)
+    assert_equal Polars::Int8, s.dtype
+    refute s.dtype.eql?(Polars::Int8)
+    assert_kind_of Polars::Int8, s.dtype
   end
 
   def test_flags
@@ -184,11 +207,6 @@ class SeriesTest < Minitest::Test
     s.sort(reverse: true, in_place: true)
     refute s.flags["SORTED_ASC"]
     assert s.flags["SORTED_DESC"]
-  end
-
-  def test_inner_dtype
-    s = Polars::Series.new([1, 2, 3])
-    assert_nil s.inner_dtype
   end
 
   def test_name
@@ -255,6 +273,18 @@ class SeriesTest < Minitest::Test
     assert_series [true, true, false], a <= 2
   end
 
+  def test_equals
+    s1 = Polars::Series.new("foo", [1, 2, 3])
+    s2 = Polars::Series.new("bar", [1, 2, 3])
+    assert s1.equals(s2)
+    refute s1.equals(s2, check_names: true)
+  end
+
+  def test_equals_nan
+    s = Polars::Series.new([1.0, Float::NAN, Float::INFINITY])
+    assert_series [true, true, true], (s == s)
+  end
+
   def test_arithmetic
     a = Polars::Series.new([10, 20, 30])
     b = Polars::Series.new([5, 10, 15])
@@ -271,6 +301,12 @@ class SeriesTest < Minitest::Test
     assert_series [50, 100, 150], a * 5
     assert_series [5, 5, 5], 5 % a
     assert_series [0, 0, 0], a % 5
+  end
+
+  def test_add_series
+    a = Polars::Series.new([1, 2, 3])
+    b = Polars::Series.new(["a", "b", "c"])
+    assert_series ["1a", "2b", "3c"], a + b
   end
 
   def test_pow
@@ -341,6 +377,8 @@ class SeriesTest < Minitest::Test
     refute Polars::Series.new([true, true, false]).all?
     refute Polars::Series.new([1, 2, 3]).all?(&:even?)
     assert Polars::Series.new([2, 4, 6]).all?(&:even?)
+    assert Polars::Series.new([true, nil]).all?
+    refute Polars::Series.new([true, nil]).all?(ignore_nulls: false)
   end
 
   def test_none
@@ -431,10 +469,10 @@ class SeriesTest < Minitest::Test
     assert_in_delta 2, s.quantile(0.5)
     assert_in_delta 3, s.quantile(1)
 
-    error = assert_raises(ArgumentError) do
+    error = assert_raises(Polars::ComputeError) do
       Polars::Series.new([1, 2, 3]).quantile(2)
     end
-    assert_equal "invalid quantile", error.message
+    assert_equal "quantile should be between 0.0 and 1.0", error.message
   end
 
   # TODO improve
@@ -443,10 +481,10 @@ class SeriesTest < Minitest::Test
     assert_equal [3, 2], s.to_dummies.shape
   end
 
-  # TODO improve
   def test_value_counts
-    s = Polars::Series.new(["a", "b", "b"])
-    assert_equal [2, 2], s.value_counts.shape
+    s = Polars::Series.new("a", ["x", "x", "y"])
+    expected = Polars::DataFrame.new({"a" => ["x", "y"], "count" => [2, 1]})
+    assert_frame expected, s.value_counts, check_row_order: false, check_dtype: false
   end
 
   def test_entropy
@@ -480,28 +518,28 @@ class SeriesTest < Minitest::Test
     assert_equal 1, s.n_chunks
   end
 
-  def test_cumsum
+  def test_cum_sum
     s = Polars::Series.new([1, 2, 3])
-    assert_series [1, 3, 6], s.cumsum
-    assert_series [6, 5, 3], s.cumsum(reverse: true)
+    assert_series [1, 3, 6], s.cum_sum
+    assert_series [6, 5, 3], s.cum_sum(reverse: true)
   end
 
-  def test_cummin
+  def test_cum_min
     s = Polars::Series.new([1, 2, 3])
-    assert_series [1, 1, 1], s.cummin
-    assert_series [1, 2, 3], s.cummin(reverse: true)
+    assert_series [1, 1, 1], s.cum_min
+    assert_series [1, 2, 3], s.cum_min(reverse: true)
   end
 
-  def test_cummax
+  def test_cum_max
     s = Polars::Series.new([1, 2, 3])
-    assert_series [1, 2, 3], s.cummax
-    assert_series [3, 3, 3], s.cummax(reverse: true)
+    assert_series [1, 2, 3], s.cum_max
+    assert_series [3, 3, 3], s.cum_max(reverse: true)
   end
 
-  def test_cumprod
+  def test_cum_prod
     s = Polars::Series.new([1, 2, 3])
-    assert_series [1, 2, 6], s.cumprod
-    assert_series [6, 6, 3], s.cumprod(reverse: true)
+    assert_series [1, 2, 6], s.cum_prod
+    assert_series [6, 6, 3], s.cum_prod(reverse: true)
   end
 
   def test_limit
@@ -622,7 +660,7 @@ class SeriesTest < Minitest::Test
 
   def test_is_datelike
     assert Polars::Series.new([Date.today]).is_datelike
-    assert Polars.date_range(DateTime.new(2020), DateTime.new(2023), "1y").is_datelike
+    assert Polars.datetime_range(DateTime.new(2020), DateTime.new(2023), "1y", eager: true).is_datelike
     refute Polars::Series.new([1]).is_datelike
   end
 
@@ -729,8 +767,8 @@ class SeriesTest < Minitest::Test
   end
 
   def test_reshape
-    s = Polars::Series.new([1, 2, 3, 4])
-    s.reshape([2, -1])
+    s = Polars::Series.new([1, 2, 3, 4, 5, 6])
+    assert_series [[1, 2, 3], [4, 5, 6]], s.reshape([2, -1]), dtype: Polars::Array
   end
 
   def test_shuffle
@@ -769,5 +807,23 @@ class SeriesTest < Minitest::Test
     assert_series [1, 4, 9], s.apply { |v| v**2 }, dtype: Polars::Int64
     assert_series [1, 2, 3], s.map(&:to_f), dtype: Polars::Float64
     assert_series [false, true, false], s.map(&:even?), dtype: Polars::Boolean
+  end
+
+  def test_ewm_mean
+    s = Polars::Series.new([1, 4, nil, 3])
+    s.ewm_mean(alpha: 0.9, ignore_nulls: false)
+  end
+
+  def test_cast
+    s = Polars::Series.new([100, 200, 300])
+    error = assert_raises(Polars::InvalidOperationError) do
+      s.cast(Polars::UInt8)
+    end
+    assert_equal "conversion from `i64` to `u8` failed in column '' for 1 out of 3 values: [300]", error.message
+  end
+
+  def test_rle
+    s = Polars::Series.new(["a", "a", "b", "c", "c", "c"])
+    assert_equal ["len", "value"], s.rle.struct.unnest.columns
   end
 end

@@ -1,31 +1,34 @@
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::{Hash, Hasher};
+pub(crate) mod any_value;
+mod chunked_array;
 
-use magnus::encoding::{EncodingCapable, Index};
+use std::fmt::{Debug, Display, Formatter};
+use std::fs::File;
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
+use std::path::PathBuf;
+
 use magnus::{
-    class, exception, prelude::*, r_hash::ForEach, value::Opaque, Float, Integer, IntoValue,
-    Module, RArray, RHash, RString, Ruby, Symbol, TryConvert, Value,
+    class, exception, prelude::*, r_hash::ForEach, try_convert::TryConvertOwned, value::Opaque,
+    IntoValue, Module, RArray, RHash, Ruby, Symbol, TryConvert, Value,
 };
 use polars::chunked_array::object::PolarsObjectSafe;
 use polars::chunked_array::ops::{FillNullLimit, FillNullStrategy};
 use polars::datatypes::AnyValue;
-use polars::frame::row::{any_values_to_dtype, Row};
-use polars::frame::NullStrategy;
+use polars::frame::row::Row;
 use polars::io::avro::AvroCompression;
+use polars::io::cloud::CloudOptions;
 use polars::prelude::*;
 use polars::series::ops::NullBehavior;
-use polars_core::utils::arrow::util::total_ord::TotalEq;
-use smartstring::alias::String as SmartString;
+use polars_core::utils::arrow::array::Array;
+use polars_core::utils::materialize_dyn_int;
+use polars_plan::plans::ScanSources;
+use polars_utils::mmap::MemSlice;
+use polars_utils::total_ord::{TotalEq, TotalHash};
 
+use crate::file::{get_ruby_scan_source_input, RubyScanSourceInput};
 use crate::object::OBJECT_NAME;
-use crate::rb_modules::utils;
+use crate::rb_modules::series;
 use crate::{RbDataFrame, RbLazyFrame, RbPolarsErr, RbResult, RbSeries, RbTypeError, RbValueError};
-
-pub(crate) fn slice_to_wrapped<T>(slice: &[T]) -> &[Wrap<T>] {
-    // Safety:
-    // Wrap is transparent.
-    unsafe { std::mem::transmute(slice) }
-}
 
 pub(crate) fn slice_extract_wrapped<T>(slice: &[Wrap<T>]) -> &[T] {
     // Safety:
@@ -70,7 +73,7 @@ pub(crate) fn get_df(obj: Value) -> RbResult<DataFrame> {
 
 pub(crate) fn get_lf(obj: Value) -> RbResult<LazyFrame> {
     let rbdf = obj.funcall::<_, _, &RbLazyFrame>("_ldf", ())?;
-    Ok(rbdf.ldf.clone())
+    Ok(rbdf.ldf.borrow().clone())
 }
 
 pub(crate) fn get_series(obj: Value) -> RbResult<Series> {
@@ -78,50 +81,38 @@ pub(crate) fn get_series(obj: Value) -> RbResult<Series> {
     Ok(rbs.series.borrow().clone())
 }
 
-impl TryConvert for Wrap<Utf8Chunked> {
-    fn try_convert(obj: Value) -> RbResult<Self> {
-        let (seq, len) = get_rbseq(obj)?;
-        let mut builder = Utf8ChunkedBuilder::new("", len, len * 25);
-
-        for res in seq.each() {
-            let item = res?;
-            match String::try_convert(item) {
-                Ok(val) => builder.append_value(&val),
-                Err(_) => builder.append_null(),
-            }
-        }
-        Ok(Wrap(builder.finish()))
-    }
+pub(crate) fn to_series(s: RbSeries) -> Value {
+    let series = series();
+    series
+        .funcall::<_, _, Value>("_from_rbseries", (s,))
+        .unwrap()
 }
 
-impl TryConvert for Wrap<BinaryChunked> {
-    fn try_convert(obj: Value) -> RbResult<Self> {
-        let (seq, len) = get_rbseq(obj)?;
-        let mut builder = BinaryChunkedBuilder::new("", len, len * 25);
-
-        for res in seq.each() {
-            let item = res?;
-            match RString::try_convert(item) {
-                Ok(val) => builder.append_value(unsafe { val.as_slice() }),
-                Err(_) => builder.append_null(),
-            }
-        }
-        Ok(Wrap(builder.finish()))
+impl TryConvert for Wrap<PlSmallStr> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        Ok(Wrap((&*String::try_convert(ob)?).into()))
     }
 }
 
 impl TryConvert for Wrap<NullValues> {
     fn try_convert(ob: Value) -> RbResult<Self> {
         if let Ok(s) = String::try_convert(ob) {
-            Ok(Wrap(NullValues::AllColumnsSingle(s)))
+            Ok(Wrap(NullValues::AllColumnsSingle((&*s).into())))
         } else if let Ok(s) = Vec::<String>::try_convert(ob) {
-            Ok(Wrap(NullValues::AllColumns(s)))
+            Ok(Wrap(NullValues::AllColumns(
+                s.into_iter().map(|x| (&*x).into()).collect(),
+            )))
         } else if let Ok(s) = Vec::<(String, String)>::try_convert(ob) {
-            Ok(Wrap(NullValues::Named(s)))
+            Ok(Wrap(NullValues::Named(
+                s.into_iter()
+                    .map(|(a, b)| ((&*a).into(), (&*b).into()))
+                    .collect(),
+            )))
         } else {
-            Err(RbPolarsErr::other(
-                "could not extract value from null_values argument".into(),
-            ))
+            Err(
+                RbPolarsErr::Other("could not extract value from null_values argument".into())
+                    .into(),
+            )
         }
     }
 }
@@ -134,106 +125,92 @@ fn struct_dict<'a>(vals: impl Iterator<Item = AnyValue<'a>>, flds: &[Field]) -> 
     dict.into_value()
 }
 
-impl IntoValue for Wrap<AnyValue<'_>> {
-    fn into_value_with(self, ruby: &Ruby) -> Value {
-        match self.0 {
-            AnyValue::UInt8(v) => ruby.into_value(v),
-            AnyValue::UInt16(v) => ruby.into_value(v),
-            AnyValue::UInt32(v) => ruby.into_value(v),
-            AnyValue::UInt64(v) => ruby.into_value(v),
-            AnyValue::Int8(v) => ruby.into_value(v),
-            AnyValue::Int16(v) => ruby.into_value(v),
-            AnyValue::Int32(v) => ruby.into_value(v),
-            AnyValue::Int64(v) => ruby.into_value(v),
-            AnyValue::Float32(v) => ruby.into_value(v),
-            AnyValue::Float64(v) => ruby.into_value(v),
-            AnyValue::Null => ruby.qnil().as_value(),
-            AnyValue::Boolean(v) => ruby.into_value(v),
-            AnyValue::Utf8(v) => ruby.into_value(v),
-            AnyValue::Utf8Owned(v) => ruby.into_value(v.as_str()),
-            AnyValue::Categorical(idx, rev, arr) => {
-                let s = if arr.is_null() {
-                    rev.get(idx)
-                } else {
-                    unsafe { arr.deref_unchecked().value(idx as usize) }
-                };
-                s.into_value()
-            }
-            AnyValue::Date(v) => utils().funcall("_to_ruby_date", (v,)).unwrap(),
-            AnyValue::Datetime(v, time_unit, time_zone) => {
-                let time_unit = time_unit.to_ascii();
-                utils()
-                    .funcall("_to_ruby_datetime", (v, time_unit, time_zone.clone()))
-                    .unwrap()
-            }
-            AnyValue::Duration(v, time_unit) => {
-                let time_unit = time_unit.to_ascii();
-                utils()
-                    .funcall("_to_ruby_duration", (v, time_unit))
-                    .unwrap()
-            }
-            AnyValue::Time(v) => utils().funcall("_to_ruby_time", (v,)).unwrap(),
-            AnyValue::Array(v, _) | AnyValue::List(v) => RbSeries::new(v).to_a().into_value(),
-            ref av @ AnyValue::Struct(_, _, flds) => struct_dict(av._iter_struct_av(), flds),
-            AnyValue::StructOwned(payload) => struct_dict(payload.0.into_iter(), &payload.1),
-            AnyValue::Object(v) => {
-                let object = v.as_any().downcast_ref::<ObjectValue>().unwrap();
-                object.to_object()
-            }
-            AnyValue::ObjectOwned(v) => {
-                let object = v.0.as_any().downcast_ref::<ObjectValue>().unwrap();
-                object.to_object()
-            }
-            AnyValue::Binary(v) => RString::from_slice(v).into_value(),
-            AnyValue::BinaryOwned(v) => RString::from_slice(&v).into_value(),
-            AnyValue::Decimal(v, scale) => utils()
-                .funcall("_to_ruby_decimal", (v.to_string(), -(scale as i32)))
-                .unwrap(),
-        }
-    }
-}
-
 impl IntoValue for Wrap<DataType> {
     fn into_value_with(self, _: &Ruby) -> Value {
         let pl = crate::rb_modules::polars();
 
         match self.0 {
-            DataType::Int8 => pl.const_get::<_, Value>("Int8").unwrap(),
-            DataType::Int16 => pl.const_get::<_, Value>("Int16").unwrap(),
-            DataType::Int32 => pl.const_get::<_, Value>("Int32").unwrap(),
-            DataType::Int64 => pl.const_get::<_, Value>("Int64").unwrap(),
-            DataType::UInt8 => pl.const_get::<_, Value>("UInt8").unwrap(),
-            DataType::UInt16 => pl.const_get::<_, Value>("UInt16").unwrap(),
-            DataType::UInt32 => pl.const_get::<_, Value>("UInt32").unwrap(),
-            DataType::UInt64 => pl.const_get::<_, Value>("UInt64").unwrap(),
-            DataType::Float32 => pl.const_get::<_, Value>("Float32").unwrap(),
-            DataType::Float64 => pl.const_get::<_, Value>("Float64").unwrap(),
+            DataType::Int8 => {
+                let class = pl.const_get::<_, Value>("Int8").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Int16 => {
+                let class = pl.const_get::<_, Value>("Int16").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Int32 => {
+                let class = pl.const_get::<_, Value>("Int32").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Int64 => {
+                let class = pl.const_get::<_, Value>("Int64").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Int128 => {
+                let class = pl.const_get::<_, Value>("Int128").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::UInt8 => {
+                let class = pl.const_get::<_, Value>("UInt8").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::UInt16 => {
+                let class = pl.const_get::<_, Value>("UInt16").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::UInt32 => {
+                let class = pl.const_get::<_, Value>("UInt32").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::UInt64 => {
+                let class = pl.const_get::<_, Value>("UInt64").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Float32 => {
+                let class = pl.const_get::<_, Value>("Float32").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Float64 | DataType::Unknown(UnknownKind::Float) => {
+                let class = pl.const_get::<_, Value>("Float64").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
             DataType::Decimal(precision, scale) => {
-                let decimal_class = pl.const_get::<_, Value>("Decimal").unwrap();
-                decimal_class
+                let class = pl.const_get::<_, Value>("Decimal").unwrap();
+                class
                     .funcall::<_, _, Value>("new", (precision, scale))
                     .unwrap()
             }
-            DataType::Boolean => pl.const_get::<_, Value>("Boolean").unwrap(),
-            DataType::Utf8 => pl.const_get::<_, Value>("Utf8").unwrap(),
-            DataType::Binary => pl.const_get::<_, Value>("Binary").unwrap(),
+            DataType::Boolean => {
+                let class = pl.const_get::<_, Value>("Boolean").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::String | DataType::Unknown(UnknownKind::Str) => {
+                let class = pl.const_get::<_, Value>("String").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Binary => {
+                let class = pl.const_get::<_, Value>("Binary").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
             DataType::Array(inner, size) => {
+                let class = pl.const_get::<_, Value>("Array").unwrap();
                 let inner = Wrap(*inner);
-                let list_class = pl.const_get::<_, Value>("Array").unwrap();
-                list_class
-                    .funcall::<_, _, Value>("new", (size, inner))
-                    .unwrap()
+                let args = (inner, size);
+                class.funcall::<_, _, Value>("new", args).unwrap()
             }
             DataType::List(inner) => {
+                let class = pl.const_get::<_, Value>("List").unwrap();
                 let inner = Wrap(*inner);
-                let list_class = pl.const_get::<_, Value>("List").unwrap();
-                list_class.funcall::<_, _, Value>("new", (inner,)).unwrap()
+                class.funcall::<_, _, Value>("new", (inner,)).unwrap()
             }
-            DataType::Date => pl.const_get::<_, Value>("Date").unwrap(),
+            DataType::Date => {
+                let class = pl.const_get::<_, Value>("Date").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
             DataType::Datetime(tu, tz) => {
                 let datetime_class = pl.const_get::<_, Value>("Datetime").unwrap();
                 datetime_class
-                    .funcall::<_, _, Value>("new", (tu.to_ascii(), tz))
+                    .funcall::<_, _, Value>("new", (tu.to_ascii(), tz.as_deref()))
                     .unwrap()
             }
             DataType::Duration(tu) => {
@@ -242,14 +219,33 @@ impl IntoValue for Wrap<DataType> {
                     .funcall::<_, _, Value>("new", (tu.to_ascii(),))
                     .unwrap()
             }
-            DataType::Object(_) => pl.const_get::<_, Value>("Object").unwrap(),
-            DataType::Categorical(_) => pl.const_get::<_, Value>("Categorical").unwrap(),
-            DataType::Time => pl.const_get::<_, Value>("Time").unwrap(),
+            DataType::Object(_, _) => {
+                let class = pl.const_get::<_, Value>("Object").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Categorical(_, ordering) => {
+                let class = pl.const_get::<_, Value>("Categorical").unwrap();
+                class.funcall("new", (Wrap(ordering),)).unwrap()
+            }
+            DataType::Enum(rev_map, _) => {
+                // we should always have an initialized rev_map coming from rust
+                let categories = rev_map.as_ref().unwrap().get_categories();
+                let class = pl.const_get::<_, Value>("Enum").unwrap();
+                let s =
+                    Series::from_arrow(PlSmallStr::from_static("category"), categories.to_boxed())
+                        .unwrap();
+                let series = to_series(s.into());
+                class.funcall::<_, _, Value>("new", (series,)).unwrap()
+            }
+            DataType::Time => {
+                let class = pl.const_get::<_, Value>("Time").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
             DataType::Struct(fields) => {
                 let field_class = pl.const_get::<_, Value>("Field").unwrap();
                 let iter = fields.iter().map(|fld| {
                     let name = fld.name().as_str();
-                    let dtype = Wrap(fld.data_type().clone());
+                    let dtype = Wrap(fld.dtype().clone());
                     field_class
                         .funcall::<_, _, Value>("new", (name, dtype))
                         .unwrap()
@@ -260,9 +256,31 @@ impl IntoValue for Wrap<DataType> {
                     .funcall::<_, _, Value>("new", (fields,))
                     .unwrap()
             }
-            DataType::Null => pl.const_get::<_, Value>("Null").unwrap(),
-            DataType::Unknown => pl.const_get::<_, Value>("Unknown").unwrap(),
+            DataType::Null => {
+                let class = pl.const_get::<_, Value>("Null").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::Unknown(UnknownKind::Int(v)) => {
+                Wrap(materialize_dyn_int(v).dtype()).into_value()
+            }
+            DataType::Unknown(_) => {
+                let class = pl.const_get::<_, Value>("Unknown").unwrap();
+                class.funcall("new", ()).unwrap()
+            }
+            DataType::BinaryOffset => {
+                unimplemented!()
+            }
         }
+    }
+}
+
+impl IntoValue for Wrap<CategoricalOrdering> {
+    fn into_value_with(self, _: &Ruby) -> Value {
+        let ordering = match self.0 {
+            CategoricalOrdering::Physical => "physical",
+            CategoricalOrdering::Lexical => "lexical",
+        };
+        ordering.into_value()
     }
 }
 
@@ -277,119 +295,11 @@ impl IntoValue for Wrap<TimeUnit> {
     }
 }
 
-impl IntoValue for Wrap<&Utf8Chunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let iter = self.0.into_iter();
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&BinaryChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let iter = self
-            .0
-            .into_iter()
-            .map(|opt_bytes| opt_bytes.map(RString::from_slice));
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&StructChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let s = self.0.clone().into_series();
-        // todo! iterate its chunks and flatten.
-        // make series::iter() accept a chunk index.
-        let s = s.rechunk();
-        let iter = s.iter().map(|av| {
-            if let AnyValue::Struct(_, _, flds) = av {
-                struct_dict(av._iter_struct_av(), flds)
-            } else {
-                unreachable!()
-            }
-        });
-
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&DurationChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let utils = utils();
-        let time_unit = Wrap(self.0.time_unit()).into_value();
-        let iter = self.0.into_iter().map(|opt_v| {
-            opt_v.map(|v| {
-                utils
-                    .funcall::<_, _, Value>("_to_ruby_duration", (v, time_unit))
-                    .unwrap()
-            })
-        });
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&DatetimeChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let utils = utils();
-        let time_unit = Wrap(self.0.time_unit()).into_value();
-        let time_zone = self.0.time_zone().clone().into_value();
-        let iter = self.0.into_iter().map(|opt_v| {
-            opt_v.map(|v| {
-                utils
-                    .funcall::<_, _, Value>("_to_ruby_datetime", (v, time_unit, time_zone))
-                    .unwrap()
-            })
-        });
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&TimeChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let utils = utils();
-        let iter = self.0.into_iter().map(|opt_v| {
-            opt_v.map(|v| utils.funcall::<_, _, Value>("_to_ruby_time", (v,)).unwrap())
-        });
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&DateChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let utils = utils();
-        let iter = self.0.into_iter().map(|opt_v| {
-            opt_v.map(|v| utils.funcall::<_, _, Value>("_to_ruby_date", (v,)).unwrap())
-        });
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-impl IntoValue for Wrap<&DecimalChunked> {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        let utils = utils();
-        let rb_scale = (-(self.0.scale() as i32)).into_value();
-        let iter = self.0.into_iter().map(|opt_v| {
-            opt_v.map(|v| {
-                utils
-                    .funcall::<_, _, Value>("_to_ruby_decimal", (v.to_string(), rb_scale))
-                    .unwrap()
-            })
-        });
-        RArray::from_iter(iter).into_value()
-    }
-}
-
-fn abs_decimal_from_digits(digits: String, exp: i32) -> Option<(i128, usize)> {
-    match digits.parse::<i128>() {
-        Ok(v) => Some((v, ((digits.len() as i32) - exp) as usize)),
-        Err(_) => None,
-    }
-}
-
 impl TryConvert for Wrap<Field> {
     fn try_convert(ob: Value) -> RbResult<Self> {
         let name: String = ob.funcall("name", ())?;
         let dtype: Wrap<DataType> = ob.funcall("dtype", ())?;
-        Ok(Wrap(Field::new(&name, dtype.0)))
+        Ok(Wrap(Field::new((&*name).into(), dtype.0)))
     }
 }
 
@@ -398,49 +308,79 @@ impl TryConvert for Wrap<DataType> {
         let dtype = if ob.is_kind_of(class::class()) {
             let name = ob.funcall::<_, _, String>("name", ())?;
             match name.as_str() {
-                "Polars::UInt8" => DataType::UInt8,
-                "Polars::UInt16" => DataType::UInt16,
-                "Polars::UInt32" => DataType::UInt32,
-                "Polars::UInt64" => DataType::UInt64,
                 "Polars::Int8" => DataType::Int8,
                 "Polars::Int16" => DataType::Int16,
                 "Polars::Int32" => DataType::Int32,
                 "Polars::Int64" => DataType::Int64,
-                "Polars::Utf8" => DataType::Utf8,
-                "Polars::Binary" => DataType::Binary,
-                "Polars::Boolean" => DataType::Boolean,
-                "Polars::Categorical" => DataType::Categorical(None),
-                "Polars::Date" => DataType::Date,
-                "Polars::Datetime" => DataType::Datetime(TimeUnit::Microseconds, None),
-                "Polars::Time" => DataType::Time,
-                "Polars::Duration" => DataType::Duration(TimeUnit::Microseconds),
-                "Polars::Decimal" => DataType::Decimal(None, None),
+                "Polars::UInt8" => DataType::UInt8,
+                "Polars::UInt16" => DataType::UInt16,
+                "Polars::UInt32" => DataType::UInt32,
+                "Polars::UInt64" => DataType::UInt64,
                 "Polars::Float32" => DataType::Float32,
                 "Polars::Float64" => DataType::Float64,
-                "Polars::Object" => DataType::Object(OBJECT_NAME),
+                "Polars::Boolean" => DataType::Boolean,
+                "Polars::String" => DataType::String,
+                "Polars::Binary" => DataType::Binary,
+                "Polars::Categorical" => DataType::Categorical(None, Default::default()),
+                "Polars::Enum" => DataType::Enum(None, Default::default()),
+                "Polars::Date" => DataType::Date,
+                "Polars::Time" => DataType::Time,
+                "Polars::Datetime" => DataType::Datetime(TimeUnit::Microseconds, None),
+                "Polars::Duration" => DataType::Duration(TimeUnit::Microseconds),
+                "Polars::Decimal" => DataType::Decimal(None, None),
                 "Polars::List" => DataType::List(Box::new(DataType::Null)),
+                "Polars::Array" => DataType::Array(Box::new(DataType::Null), 0),
+                "Polars::Struct" => DataType::Struct(vec![]),
                 "Polars::Null" => DataType::Null,
-                "Polars::Unknown" => DataType::Unknown,
+                "Polars::Object" => DataType::Object(OBJECT_NAME, None),
+                "Polars::Unknown" => DataType::Unknown(Default::default()),
                 dt => {
                     return Err(RbValueError::new_err(format!(
                         "{dt} is not a correct polars DataType.",
                     )))
                 }
             }
-        // TODO improve
         } else if String::try_convert(ob).is_err() {
             let name = unsafe { ob.class().name() }.into_owned();
             match name.as_str() {
+                "Polars::Int8" => DataType::Int8,
+                "Polars::Int16" => DataType::Int16,
+                "Polars::Int32" => DataType::Int32,
+                "Polars::Int64" => DataType::Int64,
+                "Polars::UInt8" => DataType::UInt8,
+                "Polars::UInt16" => DataType::UInt16,
+                "Polars::UInt32" => DataType::UInt32,
+                "Polars::UInt64" => DataType::UInt64,
+                "Polars::Float32" => DataType::Float32,
+                "Polars::Float64" => DataType::Float64,
+                "Polars::Boolean" => DataType::Boolean,
+                "Polars::String" => DataType::String,
+                "Polars::Binary" => DataType::Binary,
+                "Polars::Categorical" => {
+                    let ordering = ob
+                        .funcall::<_, _, Wrap<CategoricalOrdering>>("ordering", ())?
+                        .0;
+                    DataType::Categorical(None, ordering)
+                }
+                "Polars::Enum" => {
+                    let categories = ob.funcall("categories", ()).unwrap();
+                    let s = get_series(categories)?;
+                    let ca = s.str().map_err(RbPolarsErr::from)?;
+                    let categories = ca.downcast_iter().next().unwrap().clone();
+                    create_enum_dtype(categories)
+                }
+                "Polars::Date" => DataType::Date,
+                "Polars::Time" => DataType::Time,
+                "Polars::Datetime" => {
+                    let time_unit: Value = ob.funcall("time_unit", ()).unwrap();
+                    let time_unit = Wrap::<TimeUnit>::try_convert(time_unit)?.0;
+                    let time_zone: Option<String> = ob.funcall("time_zone", ())?;
+                    DataType::Datetime(time_unit, time_zone.as_deref().map(|x| x.into()))
+                }
                 "Polars::Duration" => {
                     let time_unit: Value = ob.funcall("time_unit", ()).unwrap();
                     let time_unit = Wrap::<TimeUnit>::try_convert(time_unit)?.0;
                     DataType::Duration(time_unit)
-                }
-                "Polars::Datetime" => {
-                    let time_unit: Value = ob.funcall("time_unit", ()).unwrap();
-                    let time_unit = Wrap::<TimeUnit>::try_convert(time_unit)?.0;
-                    let time_zone = ob.funcall("time_zone", ())?;
-                    DataType::Datetime(time_unit, time_zone)
                 }
                 "Polars::Decimal" => {
                     let precision = ob.funcall("precision", ())?;
@@ -452,14 +392,24 @@ impl TryConvert for Wrap<DataType> {
                     let inner = Wrap::<DataType>::try_convert(inner)?;
                     DataType::List(Box::new(inner.0))
                 }
+                "Polars::Array" => {
+                    let inner: Value = ob.funcall("inner", ()).unwrap();
+                    let size: Value = ob.funcall("size", ()).unwrap();
+                    let inner = Wrap::<DataType>::try_convert(inner)?;
+                    let size = usize::try_convert(size)?;
+                    DataType::Array(Box::new(inner.0), size)
+                }
                 "Polars::Struct" => {
                     let arr: RArray = ob.funcall("fields", ())?;
                     let mut fields = Vec::with_capacity(arr.len());
-                    for v in arr.each() {
-                        fields.push(Wrap::<Field>::try_convert(v?)?.0);
+                    for v in arr.into_iter() {
+                        fields.push(Wrap::<Field>::try_convert(v)?.0);
                     }
                     DataType::Struct(fields)
                 }
+                "Polars::Null" => DataType::Null,
+                "Object" => DataType::Object(OBJECT_NAME, None),
+                "Polars::Unknown" => DataType::Unknown(Default::default()),
                 dt => {
                     return Err(RbTypeError::new_err(format!(
                         "A {dt} object is not a correct polars DataType. \
@@ -477,20 +427,20 @@ impl TryConvert for Wrap<DataType> {
                 "i16" => DataType::Int16,
                 "i32" => DataType::Int32,
                 "i64" => DataType::Int64,
-                "str" => DataType::Utf8,
+                "str" => DataType::String,
                 "bin" => DataType::Binary,
                 "bool" => DataType::Boolean,
-                "cat" => DataType::Categorical(None),
+                "cat" => DataType::Categorical(None, Default::default()),
                 "date" => DataType::Date,
                 "datetime" => DataType::Datetime(TimeUnit::Microseconds, None),
                 "f32" => DataType::Float32,
                 "time" => DataType::Time,
                 "dur" => DataType::Duration(TimeUnit::Microseconds),
                 "f64" => DataType::Float64,
-                "obj" => DataType::Object(OBJECT_NAME),
+                "obj" => DataType::Object(OBJECT_NAME, None),
                 "list" => DataType::List(Box::new(DataType::Boolean)),
                 "null" => DataType::Null,
-                "unk" => DataType::Unknown,
+                "unk" => DataType::Unknown(Default::default()),
                 _ => {
                     return Err(RbValueError::new_err(format!(
                         "{} is not a supported DataType.",
@@ -503,107 +453,37 @@ impl TryConvert for Wrap<DataType> {
     }
 }
 
-impl<'s> TryConvert for Wrap<AnyValue<'s>> {
+unsafe impl TryConvertOwned for Wrap<DataType> {}
+
+impl TryConvert for Wrap<StatisticsOptions> {
     fn try_convert(ob: Value) -> RbResult<Self> {
-        if ob.is_kind_of(class::true_class()) || ob.is_kind_of(class::false_class()) {
-            Ok(AnyValue::Boolean(bool::try_convert(ob)?).into())
-        } else if let Some(v) = Integer::from_value(ob) {
-            Ok(AnyValue::Int64(v.to_i64()?).into())
-        } else if let Some(v) = Float::from_value(ob) {
-            Ok(AnyValue::Float64(v.to_f64()).into())
-        } else if let Some(v) = RString::from_value(ob) {
-            if v.enc_get() == Index::utf8() {
-                Ok(AnyValue::Utf8Owned(v.to_string()?.into()).into())
-            } else {
-                Ok(AnyValue::BinaryOwned(unsafe { v.as_slice() }.to_vec()).into())
-            }
-        // call is_a? for ActiveSupport::TimeWithZone
-        } else if ob.funcall::<_, _, bool>("is_a?", (class::time(),))? {
-            let sec = ob.funcall::<_, _, i64>("to_i", ())?;
-            let nsec = ob.funcall::<_, _, i64>("nsec", ())?;
-            let v = sec * 1_000_000_000 + nsec;
-            // TODO support time zone when possible
-            // https://github.com/pola-rs/polars/issues/9103
-            Ok(AnyValue::Datetime(v, TimeUnit::Nanoseconds, &None).into())
-        } else if ob.is_nil() {
-            Ok(AnyValue::Null.into())
-        } else if let Some(dict) = RHash::from_value(ob) {
-            let len = dict.len();
-            let mut keys = Vec::with_capacity(len);
-            let mut vals = Vec::with_capacity(len);
-            dict.foreach(|k: Value, v: Value| {
-                let key = String::try_convert(k)?;
-                let val = Wrap::<AnyValue>::try_convert(v)?.0;
-                let dtype = DataType::from(&val);
-                keys.push(Field::new(&key, dtype));
-                vals.push(val);
-                Ok(ForEach::Continue)
-            })?;
-            Ok(Wrap(AnyValue::StructOwned(Box::new((vals, keys)))))
-        } else if let Some(v) = RArray::from_value(ob) {
-            if v.is_empty() {
-                Ok(Wrap(AnyValue::List(Series::new_empty("", &DataType::Null))))
-            } else {
-                let list = v;
+        let mut statistics = StatisticsOptions::empty();
 
-                let mut avs = Vec::with_capacity(25);
-                let mut iter = list.each();
-
-                for item in (&mut iter).take(25) {
-                    avs.push(Wrap::<AnyValue>::try_convert(item?)?.0)
+        let dict = RHash::try_convert(ob)?;
+        dict.foreach(|key: Symbol, val: bool| {
+            match key.name()?.as_ref() {
+                "min" => statistics.min_value = val,
+                "max" => statistics.max_value = val,
+                "distinct_count" => statistics.distinct_count = val,
+                "null_count" => statistics.null_count = val,
+                _ => {
+                    return Err(RbTypeError::new_err(format!(
+                        "'{key}' is not a valid statistic option",
+                    )))
                 }
-
-                let (dtype, _n_types) = any_values_to_dtype(&avs).map_err(RbPolarsErr::from)?;
-
-                // push the rest
-                avs.reserve(list.len());
-                for item in iter {
-                    avs.push(Wrap::<AnyValue>::try_convert(item?)?.0)
-                }
-
-                let s = Series::from_any_values_and_dtype("", &avs, &dtype, true)
-                    .map_err(RbPolarsErr::from)?;
-                Ok(Wrap(AnyValue::List(s)))
             }
-        } else if ob.is_kind_of(crate::rb_modules::datetime()) {
-            let sec: i64 = ob.funcall("to_i", ())?;
-            let nsec: i64 = ob.funcall("nsec", ())?;
-            Ok(Wrap(AnyValue::Datetime(
-                sec * 1_000_000_000 + nsec,
-                TimeUnit::Nanoseconds,
-                &None,
-            )))
-        } else if ob.is_kind_of(crate::rb_modules::date()) {
-            // convert to DateTime for UTC
-            let v = ob
-                .funcall::<_, _, Value>("to_datetime", ())?
-                .funcall::<_, _, Value>("to_time", ())?
-                .funcall::<_, _, i64>("to_i", ())?;
-            Ok(Wrap(AnyValue::Date((v / 86400) as i32)))
-        } else if ob.is_kind_of(crate::rb_modules::bigdecimal()) {
-            let (sign, digits, _, exp): (i8, String, i32, i32) = ob.funcall("split", ()).unwrap();
-            let (mut v, scale) = abs_decimal_from_digits(digits, exp).ok_or_else(|| {
-                RbPolarsErr::other("BigDecimal is too large to fit in Decimal128".into())
-            })?;
-            if sign < 0 {
-                // TODO better error
-                v = v.checked_neg().unwrap();
-            }
-            Ok(Wrap(AnyValue::Decimal(v, scale)))
-        } else {
-            Err(RbPolarsErr::other(format!(
-                "object type not supported {:?}",
-                ob
-            )))
-        }
+            Ok(ForEach::Continue)
+        })?;
+
+        Ok(Wrap(statistics))
     }
 }
 
 impl<'s> TryConvert for Wrap<Row<'s>> {
     fn try_convert(ob: Value) -> RbResult<Self> {
         let mut vals: Vec<Wrap<AnyValue<'s>>> = Vec::new();
-        for item in RArray::try_convert(ob)?.each() {
-            vals.push(Wrap::<AnyValue<'s>>::try_convert(item?)?);
+        for item in RArray::try_convert(ob)?.into_iter() {
+            vals.push(Wrap::<AnyValue<'s>>::try_convert(item)?);
         }
         let vals: Vec<AnyValue> = unsafe { std::mem::transmute(vals) };
         Ok(Wrap(Row(vals)))
@@ -616,12 +496,74 @@ impl TryConvert for Wrap<Schema> {
 
         let mut schema = Vec::new();
         dict.foreach(|key: String, val: Wrap<DataType>| {
-            schema.push(Ok(Field::new(&key, val.0)));
+            schema.push(Ok(Field::new((&*key).into(), val.0)));
             Ok(ForEach::Continue)
-        })
-        .unwrap();
+        })?;
 
         Ok(Wrap(schema.into_iter().collect::<RbResult<Schema>>()?))
+    }
+}
+
+impl TryConvert for Wrap<ScanSources> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let list = RArray::try_convert(ob)?;
+
+        if list.is_empty() {
+            return Ok(Wrap(ScanSources::default()));
+        }
+
+        enum MutableSources {
+            Paths(Vec<PathBuf>),
+            Files(Vec<File>),
+            Buffers(Vec<MemSlice>),
+        }
+
+        let num_items = list.len();
+        let mut iter = list
+            .into_iter()
+            .map(|val| get_ruby_scan_source_input(val, false));
+
+        let Some(first) = iter.next() else {
+            return Ok(Wrap(ScanSources::default()));
+        };
+
+        let mut sources = match first? {
+            RubyScanSourceInput::Path(path) => {
+                let mut sources = Vec::with_capacity(num_items);
+                sources.push(path);
+                MutableSources::Paths(sources)
+            }
+            RubyScanSourceInput::File(file) => {
+                let mut sources = Vec::with_capacity(num_items);
+                sources.push(file);
+                MutableSources::Files(sources)
+            }
+            RubyScanSourceInput::Buffer(buffer) => {
+                let mut sources = Vec::with_capacity(num_items);
+                sources.push(buffer);
+                MutableSources::Buffers(sources)
+            }
+        };
+
+        for source in iter {
+            match (&mut sources, source?) {
+                (MutableSources::Paths(v), RubyScanSourceInput::Path(p)) => v.push(p),
+                (MutableSources::Files(v), RubyScanSourceInput::File(f)) => v.push(f),
+                (MutableSources::Buffers(v), RubyScanSourceInput::Buffer(f)) => v.push(f),
+                _ => {
+                    return Err(RbTypeError::new_err(
+                        "Cannot combine in-memory bytes, paths and files for scan sources"
+                            .to_string(),
+                    ))
+                }
+            }
+        }
+
+        Ok(Wrap(match sources {
+            MutableSources::Paths(i) => ScanSources::Paths(i.into()),
+            MutableSources::Files(i) => ScanSources::Files(i.into()),
+            MutableSources::Buffers(i) => ScanSources::Buffers(i.into()),
+        }))
     }
 }
 
@@ -633,7 +575,7 @@ pub struct ObjectValue {
 impl Debug for ObjectValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ObjectValue")
-            .field("inner", &self.to_object())
+            .field("inner", &self.to_value())
             .finish()
     }
 }
@@ -641,7 +583,7 @@ impl Debug for ObjectValue {
 impl Hash for ObjectValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let h = self
-            .to_object()
+            .to_value()
             .funcall::<_, _, isize>("hash", ())
             .expect("should be hashable");
         state.write_isize(h)
@@ -652,7 +594,7 @@ impl Eq for ObjectValue {}
 
 impl PartialEq for ObjectValue {
     fn eq(&self, other: &Self) -> bool {
-        self.to_object().eql(other.to_object()).unwrap_or(false)
+        self.to_value().eql(other.to_value()).unwrap_or(false)
     }
 }
 
@@ -662,9 +604,18 @@ impl TotalEq for ObjectValue {
     }
 }
 
+impl TotalHash for ObjectValue {
+    fn tot_hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        self.hash(state);
+    }
+}
+
 impl Display for ObjectValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_object())
+        write!(f, "{}", self.to_value())
     }
 }
 
@@ -692,16 +643,15 @@ impl From<&dyn PolarsObjectSafe> for &ObjectValue {
     }
 }
 
-// TODO remove
 impl ObjectValue {
-    pub fn to_object(&self) -> Value {
-        Ruby::get().unwrap().get_inner(self.inner)
+    pub fn to_value(&self) -> Value {
+        self.clone().into_value()
     }
 }
 
 impl IntoValue for ObjectValue {
-    fn into_value_with(self, _: &Ruby) -> Value {
-        self.to_object()
+    fn into_value_with(self, ruby: &Ruby) -> Value {
+        ruby.get_inner(self.inner)
     }
 }
 
@@ -713,57 +663,15 @@ impl Default for ObjectValue {
     }
 }
 
-pub(crate) fn dicts_to_rows(
-    records: &Value,
-    infer_schema_len: usize,
-) -> RbResult<(Vec<Row>, Vec<String>)> {
-    let (dicts, len) = get_rbseq(*records)?;
-
-    let mut key_names = PlIndexSet::new();
-    for d in dicts.each().take(infer_schema_len) {
-        let d = d?;
-        let d = RHash::try_convert(d)?;
-
-        d.foreach(|name: Value, _value: Value| {
-            if let Some(v) = Symbol::from_value(name) {
-                key_names.insert(v.name()?.into());
-            } else {
-                key_names.insert(String::try_convert(name)?);
-            };
-            Ok(ForEach::Continue)
-        })?;
-    }
-
-    let mut rows = Vec::with_capacity(len);
-
-    for d in dicts.each() {
-        let d = d?;
-        let d = RHash::try_convert(d)?;
-
-        let mut row = Vec::with_capacity(key_names.len());
-
-        for k in key_names.iter() {
-            // TODO improve performance
-            let val = match d.get(k.clone()).or_else(|| d.get(Symbol::new(k))) {
-                None => AnyValue::Null,
-                Some(val) => Wrap::<AnyValue>::try_convert(val)?.0,
-            };
-            row.push(val)
-        }
-        rows.push(Row(row))
-    }
-    Ok((rows, key_names.into_iter().collect()))
-}
-
 impl TryConvert for Wrap<AsofStrategy> {
     fn try_convert(ob: Value) -> RbResult<Self> {
         let parsed = match String::try_convert(ob)?.as_str() {
             "backward" => AsofStrategy::Backward,
             "forward" => AsofStrategy::Forward,
+            "nearest" => AsofStrategy::Nearest,
             v => {
                 return Err(RbValueError::new_err(format!(
-                    "strategy must be one of {{'backward', 'forward'}}, got {}",
-                    v
+                    "asof `strategy` must be one of {{'backward', 'forward', 'nearest'}}, got {v}",
                 )))
             }
         };
@@ -891,14 +799,13 @@ impl TryConvert for Wrap<JoinType> {
         let parsed = match String::try_convert(ob)?.as_str() {
             "inner" => JoinType::Inner,
             "left" => JoinType::Left,
-            "outer" => JoinType::Outer,
+            "full" => JoinType::Full,
             "semi" => JoinType::Semi,
             "anti" => JoinType::Anti,
-            // #[cfg(feature = "cross_join")]
-            // "cross" => JoinType::Cross,
+            "cross" => JoinType::Cross,
             v => {
                 return Err(RbValueError::new_err(format!(
-                "how must be one of {{'inner', 'left', 'outer', 'semi', 'anti', 'cross'}}, got {}",
+                "how must be one of {{'inner', 'left', 'full', 'semi', 'anti', 'cross'}}, got {}",
                 v
             )))
             }
@@ -932,6 +839,21 @@ impl TryConvert for Wrap<ListToStructWidthStrategy> {
                 return Err(RbValueError::new_err(format!(
                     "n_field_strategy must be one of {{'first_non_null', 'max_width'}}, got {}",
                     v
+                )))
+            }
+        };
+        Ok(Wrap(parsed))
+    }
+}
+
+impl TryConvert for Wrap<NonExistent> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let parsed = match String::try_convert(ob)?.as_str() {
+            "null" => NonExistent::Null,
+            "raise" => NonExistent::Raise,
+            v => {
+                return Err(RbValueError::new_err(format!(
+                    "`non_existent` must be one of {{'null', 'raise'}}, got {v}",
                 )))
             }
         };
@@ -989,14 +911,14 @@ impl TryConvert for Wrap<ParallelStrategy> {
     }
 }
 
-impl TryConvert for Wrap<QuantileInterpolOptions> {
+impl TryConvert for Wrap<QuantileMethod> {
     fn try_convert(ob: Value) -> RbResult<Self> {
         let parsed = match String::try_convert(ob)?.as_str() {
-            "lower" => QuantileInterpolOptions::Lower,
-            "higher" => QuantileInterpolOptions::Higher,
-            "nearest" => QuantileInterpolOptions::Nearest,
-            "linear" => QuantileInterpolOptions::Linear,
-            "midpoint" => QuantileInterpolOptions::Midpoint,
+            "lower" => QuantileMethod::Lower,
+            "higher" => QuantileMethod::Higher,
+            "nearest" => QuantileMethod::Nearest,
+            "linear" => QuantileMethod::Linear,
+            "midpoint" => QuantileMethod::Midpoint,
             v => {
                 return Err(RbValueError::new_err(format!(
                     "interpolation must be one of {{'lower', 'higher', 'nearest', 'linear', 'midpoint'}}, got {}",
@@ -1061,6 +983,22 @@ impl TryConvert for Wrap<UniqueKeepStrategy> {
     }
 }
 
+impl TryConvert for Wrap<IpcCompression> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let parsed = match String::try_convert(ob)?.as_str() {
+            "lz4" => IpcCompression::LZ4,
+            "zstd" => IpcCompression::ZSTD,
+            v => {
+                return Err(RbValueError::new_err(format!(
+                    "compression must be one of {{'lz4', 'zstd'}}, got {}",
+                    v
+                )))
+            }
+        };
+        Ok(Wrap(parsed))
+    }
+}
+
 impl TryConvert for Wrap<SearchSortedSide> {
     fn try_convert(ob: Value) -> RbResult<Self> {
         let parsed = match String::try_convert(ob)?.as_str() {
@@ -1075,6 +1013,78 @@ impl TryConvert for Wrap<SearchSortedSide> {
         };
         Ok(Wrap(parsed))
     }
+}
+
+impl TryConvert for Wrap<ClosedInterval> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let parsed = match String::try_convert(ob)?.as_str() {
+            "both" => ClosedInterval::Both,
+            "left" => ClosedInterval::Left,
+            "right" => ClosedInterval::Right,
+            "none" => ClosedInterval::None,
+            v => {
+                return Err(RbValueError::new_err(format!(
+                    "`closed` must be one of {{'both', 'left', 'right', 'none'}}, got {v}",
+                )))
+            }
+        };
+        Ok(Wrap(parsed))
+    }
+}
+
+impl TryConvert for Wrap<WindowMapping> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let parsed = match String::try_convert(ob)?.as_str() {
+            "group_to_rows" => WindowMapping::GroupsToRows,
+            "join" => WindowMapping::Join,
+            "explode" => WindowMapping::Explode,
+            v => {
+                return Err(RbValueError::new_err(format!(
+                "`mapping_strategy` must be one of {{'group_to_rows', 'join', 'explode'}}, got {v}",
+            )))
+            }
+        };
+        Ok(Wrap(parsed))
+    }
+}
+
+impl TryConvert for Wrap<JoinValidation> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let parsed = match String::try_convert(ob)?.as_str() {
+            "1:1" => JoinValidation::OneToOne,
+            "1:m" => JoinValidation::OneToMany,
+            "m:m" => JoinValidation::ManyToMany,
+            "m:1" => JoinValidation::ManyToOne,
+            v => {
+                return Err(RbValueError::new_err(format!(
+                    "`validate` must be one of {{'m:m', 'm:1', '1:m', '1:1'}}, got {v}",
+                )))
+            }
+        };
+        Ok(Wrap(parsed))
+    }
+}
+
+impl TryConvert for Wrap<QuoteStyle> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let parsed = match String::try_convert(ob)?.as_str() {
+            "always" => QuoteStyle::Always,
+            "necessary" => QuoteStyle::Necessary,
+            "non_numeric" => QuoteStyle::NonNumeric,
+            "never" => QuoteStyle::Never,
+            v => {
+                return Err(RbValueError::new_err(format!(
+                    "`quote_style` must be one of {{'always', 'necessary', 'non_numeric', 'never'}}, got {v}",
+                )))
+            },
+        };
+        Ok(Wrap(parsed))
+    }
+}
+
+pub(crate) fn parse_cloud_options(uri: &str, kv: Vec<(String, String)>) -> RbResult<CloudOptions> {
+    let out = CloudOptions::from_untyped_config(uri, kv).map_err(RbPolarsErr::from)?;
+    Ok(out)
 }
 
 pub fn parse_fill_null_strategy(
@@ -1142,10 +1152,47 @@ pub fn parse_parquet_compression(
     Ok(parsed)
 }
 
-pub(crate) fn strings_to_smartstrings<I, S>(container: I) -> Vec<SmartString>
+impl TryConvert for Wrap<NonZeroUsize> {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        let v = usize::try_convert(ob)?;
+        NonZeroUsize::new(v)
+            .map(Wrap)
+            .ok_or(RbValueError::new_err("must be non-zero"))
+    }
+}
+
+pub(crate) fn strings_to_pl_smallstr<I, S>(container: I) -> Vec<PlSmallStr>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    container.into_iter().map(|s| s.as_ref().into()).collect()
+    container
+        .into_iter()
+        .map(|s| PlSmallStr::from_str(s.as_ref()))
+        .collect()
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct RbCompatLevel(pub CompatLevel);
+
+impl TryConvert for RbCompatLevel {
+    fn try_convert(ob: Value) -> RbResult<Self> {
+        Ok(RbCompatLevel(if let Ok(level) = u16::try_convert(ob) {
+            if let Ok(compat_level) = CompatLevel::with_level(level) {
+                compat_level
+            } else {
+                return Err(RbValueError::new_err("invalid compat level".to_string()));
+            }
+        } else if let Ok(future) = bool::try_convert(ob) {
+            if future {
+                CompatLevel::newest()
+            } else {
+                CompatLevel::oldest()
+            }
+        } else {
+            return Err(RbTypeError::new_err(
+                "'compat_level' argument accepts int or bool".to_string(),
+            ));
+        }))
+    }
 }

@@ -5,9 +5,9 @@ pub mod series;
 use magnus::{prelude::*, RHash, Value};
 use polars::chunked_array::builder::get_list_builder;
 use polars::prelude::*;
-use polars_core::export::rayon::prelude::*;
 use polars_core::utils::CustomIterTools;
 use polars_core::POOL;
+use rayon::prelude::*;
 
 use crate::{ObjectValue, RbPolarsErr, RbResult, RbSeries, Wrap};
 
@@ -28,14 +28,14 @@ fn iterator_to_struct(
     it: impl Iterator<Item = Option<Value>>,
     init_null_count: usize,
     first_value: AnyValue,
-    name: &str,
+    name: PlSmallStr,
     capacity: usize,
 ) -> RbResult<RbSeries> {
     let (vals, flds) = match &first_value {
         av @ AnyValue::Struct(_, _, flds) => (av._iter_struct_av().collect::<Vec<_>>(), &**flds),
         AnyValue::StructOwned(payload) => (payload.0.clone(), &*payload.1),
         _ => {
-            return Err(crate::error::ComputeError::new_err(format!(
+            return Err(crate::exceptions::ComputeError::new_err(format!(
                 "expected struct got {first_value:?}",
             )))
         }
@@ -70,7 +70,7 @@ fn iterator_to_struct(
             Some(dict) => {
                 let dict = RHash::try_convert(dict)?;
                 if dict.len() != struct_width {
-                    return Err(crate::error::ComputeError::new_err(
+                    return Err(crate::exceptions::ComputeError::new_err(
                         format!("Cannot create struct type.\n> The struct dtype expects {} fields, but it got a dict with {} fields.", struct_width, dict.len())
                     ));
                 }
@@ -89,21 +89,23 @@ fn iterator_to_struct(
         items
             .par_iter()
             .zip(flds)
-            .map(|(av, fld)| Series::new(fld.name(), av))
+            .map(|(av, fld)| Series::new(fld.name().clone(), av))
             .collect::<Vec<_>>()
     });
 
-    Ok(StructChunked::new(name, &fields)
-        .unwrap()
-        .into_series()
-        .into())
+    Ok(
+        StructChunked::from_series(name, fields[0].len(), fields.iter())
+            .unwrap()
+            .into_series()
+            .into(),
+    )
 }
 
 fn iterator_to_primitive<T>(
     it: impl Iterator<Item = Option<T::Native>>,
     init_null_count: usize,
     first_value: Option<T::Native>,
-    name: &str,
+    name: PlSmallStr,
     capacity: usize,
 ) -> ChunkedArray<T>
 where
@@ -136,7 +138,7 @@ fn iterator_to_bool(
     it: impl Iterator<Item = Option<bool>>,
     init_null_count: usize,
     first_value: Option<bool>,
-    name: &str,
+    name: PlSmallStr,
     capacity: usize,
 ) -> ChunkedArray<BooleanType> {
     // safety: we know the iterators len
@@ -166,7 +168,7 @@ fn iterator_to_object(
     it: impl Iterator<Item = Option<ObjectValue>>,
     init_null_count: usize,
     first_value: Option<ObjectValue>,
-    name: &str,
+    name: PlSmallStr,
     capacity: usize,
 ) -> ObjectChunked<ObjectValue> {
     // safety: we know the iterators len
@@ -196,13 +198,13 @@ fn iterator_to_utf8(
     it: impl Iterator<Item = Option<String>>,
     init_null_count: usize,
     first_value: Option<&str>,
-    name: &str,
+    name: PlSmallStr,
     capacity: usize,
-) -> Utf8Chunked {
+) -> StringChunked {
     let first_value = first_value.map(|v| v.to_string());
 
     // safety: we know the iterators len
-    let mut ca: Utf8Chunked = unsafe {
+    let mut ca: StringChunked = unsafe {
         if init_null_count > 0 {
             (0..init_null_count)
                 .map(|_| None)
@@ -229,11 +231,10 @@ fn iterator_to_list(
     it: impl Iterator<Item = Option<Series>>,
     init_null_count: usize,
     first_value: Option<&Series>,
-    name: &str,
+    name: PlSmallStr,
     capacity: usize,
 ) -> RbResult<ListChunked> {
-    let mut builder =
-        get_list_builder(dt, capacity * 5, capacity, name).map_err(RbPolarsErr::from)?;
+    let mut builder = get_list_builder(dt, capacity * 5, capacity, name);
     for _ in 0..init_null_count {
         builder.append_null()
     }
@@ -246,7 +247,7 @@ fn iterator_to_list(
             Some(s) => {
                 if s.len() == 0 && s.dtype() != dt {
                     builder
-                        .append_series(&Series::full_null("", 0, dt))
+                        .append_series(&Series::full_null(PlSmallStr::EMPTY, 0, dt))
                         .unwrap()
                 } else {
                     builder.append_series(&s).map_err(RbPolarsErr::from)?

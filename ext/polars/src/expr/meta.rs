@@ -7,15 +7,11 @@ impl RbExpr {
         self.inner == other.inner
     }
 
-    pub fn meta_pop(&self) -> RArray {
-        RArray::from_iter(
-            self.inner
-                .clone()
-                .meta()
-                .pop()
-                .into_iter()
-                .map(RbExpr::from),
-        )
+    pub fn meta_pop(&self) -> RbResult<RArray> {
+        let exprs = self.inner.clone().meta().pop().map_err(RbPolarsErr::from)?;
+        Ok(RArray::from_iter(
+            exprs.iter().map(|e| RbExpr::from(e.clone())),
+        ))
     }
 
     pub fn meta_root_names(&self) -> Vec<String> {
@@ -46,7 +42,59 @@ impl RbExpr {
         self.inner.clone().meta().has_multiple_outputs()
     }
 
+    pub fn meta_is_column(&self) -> bool {
+        self.inner.clone().meta().is_column()
+    }
+
     pub fn meta_is_regex_projection(&self) -> bool {
         self.inner.clone().meta().is_regex_projection()
+    }
+
+    pub fn _meta_selector_add(&self, other: &RbExpr) -> RbResult<RbExpr> {
+        let out = self
+            .inner
+            .clone()
+            .meta()
+            ._selector_add(other.inner.clone())
+            .map_err(RbPolarsErr::from)?;
+        Ok(out.into())
+    }
+
+    pub fn _meta_selector_sub(&self, other: &RbExpr) -> RbResult<RbExpr> {
+        let out = self
+            .inner
+            .clone()
+            .meta()
+            ._selector_sub(other.inner.clone())
+            .map_err(RbPolarsErr::from)?;
+        Ok(out.into())
+    }
+
+    pub fn _meta_selector_and(&self, other: &RbExpr) -> RbResult<RbExpr> {
+        let out = self
+            .inner
+            .clone()
+            .meta()
+            ._selector_and(other.inner.clone())
+            .map_err(RbPolarsErr::from)?;
+        Ok(out.into())
+    }
+
+    pub fn _meta_as_selector(&self) -> RbExpr {
+        self.inner.clone().meta()._into_selector().into()
+    }
+
+    fn compute_tree_format(&self, display_as_dot: bool) -> RbResult<String> {
+        let e = self
+            .inner
+            .clone()
+            .meta()
+            .into_tree_formatter(display_as_dot)
+            .map_err(RbPolarsErr::from)?;
+        Ok(format!("{e}"))
+    }
+
+    pub fn meta_tree_format(&self) -> RbResult<String> {
+        self.compute_tree_format(false)
     }
 }

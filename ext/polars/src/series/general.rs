@@ -1,63 +1,30 @@
-mod aggregation;
-mod arithmetic;
-mod comparison;
-mod construction;
-mod export;
-mod set_at_idx;
-
-use magnus::{exception, prelude::*, value::qnil, Error, IntoValue, RArray, Value};
+use magnus::{exception, Error, IntoValue, Value};
 use polars::prelude::*;
 use polars::series::IsSorted;
-use std::cell::RefCell;
 
 use crate::apply_method_all_arrow_series2;
 use crate::conversion::*;
 use crate::map::series::{call_lambda_and_extract, ApplyLambda};
-use crate::{RbDataFrame, RbPolarsErr, RbResult};
-
-#[magnus::wrap(class = "Polars::RbSeries")]
-pub struct RbSeries {
-    pub series: RefCell<Series>,
-}
-
-impl From<Series> for RbSeries {
-    fn from(series: Series) -> Self {
-        RbSeries::new(series)
-    }
-}
-
-impl RbSeries {
-    pub fn new(series: Series) -> Self {
-        RbSeries {
-            series: RefCell::new(series),
-        }
-    }
-}
-
-pub fn to_series_collection(rs: RArray) -> RbResult<Vec<Series>> {
-    let mut series = Vec::new();
-    for item in rs.each() {
-        series.push(<&RbSeries>::try_convert(item?)?.series.borrow().clone());
-    }
-    Ok(series)
-}
-
-pub fn to_rbseries_collection(s: Vec<Series>) -> RArray {
-    RArray::from_iter(s.into_iter().map(RbSeries::new))
-}
+use crate::{RbDataFrame, RbPolarsErr, RbResult, RbSeries};
 
 impl RbSeries {
     pub fn struct_unnest(&self) -> RbResult<RbDataFrame> {
         let binding = self.series.borrow();
         let ca = binding.struct_().map_err(RbPolarsErr::from)?;
-        let df: DataFrame = ca.clone().into();
+        let df: DataFrame = ca.clone().unnest();
         Ok(df.into())
     }
 
-    // pub fn struct_fields(&self) -> RbResult<Vec<&str>> {
-    //     let ca = self.series.borrow().struct_().map_err(RbPolarsErr::from)?;
-    //     Ok(ca.fields().iter().map(|s| s.name()).collect())
-    // }
+    // TODO add to Ruby
+    pub fn struct_fields(&self) -> RbResult<Vec<String>> {
+        let binding = self.series.borrow();
+        let ca = binding.struct_().map_err(RbPolarsErr::from)?;
+        Ok(ca
+            .struct_fields()
+            .iter()
+            .map(|s| s.name().to_string())
+            .collect())
+    }
 
     pub fn is_sorted_ascending_flag(&self) -> bool {
         matches!(self.series.borrow().is_sorted_flag(), IsSorted::Ascending)
@@ -74,13 +41,31 @@ impl RbSeries {
         }
     }
 
+    pub fn cat_uses_lexical_ordering(&self) -> RbResult<bool> {
+        let binding = self.series.borrow();
+        let ca = binding.categorical().map_err(RbPolarsErr::from)?;
+        Ok(ca.uses_lexical_ordering())
+    }
+
+    pub fn cat_is_local(&self) -> RbResult<bool> {
+        let binding = self.series.borrow();
+        let ca = binding.categorical().map_err(RbPolarsErr::from)?;
+        Ok(ca.get_rev_map().is_local())
+    }
+
+    pub fn cat_to_local(&self) -> RbResult<Self> {
+        let binding = self.series.borrow();
+        let ca = binding.categorical().map_err(RbPolarsErr::from)?;
+        Ok(ca.to_local().into_series().into())
+    }
+
     pub fn estimated_size(&self) -> usize {
         self.series.borrow().estimated_size()
     }
 
     pub fn get_fmt(&self, index: usize, str_lengths: usize) -> String {
         let val = format!("{}", self.series.borrow().get(index).unwrap());
-        if let DataType::Utf8 | DataType::Categorical(_) = self.series.borrow().dtype() {
+        if let DataType::String | DataType::Categorical(_, _) = self.series.borrow().dtype() {
             let v_trunc = &val[..val
                 .char_indices()
                 .take(str_lengths)
@@ -90,7 +75,7 @@ impl RbSeries {
             if val == v_trunc {
                 val
             } else {
-                format!("{}...", v_trunc)
+                format!("{}…", v_trunc)
             }
         } else {
             val
@@ -112,29 +97,17 @@ impl RbSeries {
     }
 
     pub fn bitand(&self, other: &RbSeries) -> RbResult<Self> {
-        let out = self
-            .series
-            .borrow()
-            .bitand(&other.series.borrow())
-            .map_err(RbPolarsErr::from)?;
+        let out = (&*self.series.borrow() & &*other.series.borrow()).map_err(RbPolarsErr::from)?;
         Ok(out.into())
     }
 
     pub fn bitor(&self, other: &RbSeries) -> RbResult<Self> {
-        let out = self
-            .series
-            .borrow()
-            .bitor(&other.series.borrow())
-            .map_err(RbPolarsErr::from)?;
+        let out = (&*self.series.borrow() | &*other.series.borrow()).map_err(RbPolarsErr::from)?;
         Ok(out.into())
     }
 
     pub fn bitxor(&self, other: &RbSeries) -> RbResult<Self> {
-        let out = self
-            .series
-            .borrow()
-            .bitxor(&other.series.borrow())
-            .map_err(RbPolarsErr::from)?;
+        let out = (&*self.series.borrow() ^ &*other.series.borrow()).map_err(RbPolarsErr::from)?;
         Ok(out.into())
     }
 
@@ -143,11 +116,11 @@ impl RbSeries {
     }
 
     pub fn name(&self) -> String {
-        self.series.borrow().name().into()
+        self.series.borrow().name().to_string()
     }
 
     pub fn rename(&self, name: String) {
-        self.series.borrow_mut().rename(&name);
+        self.series.borrow_mut().rename(name.into());
     }
 
     pub fn dtype(&self) -> Value {
@@ -215,17 +188,38 @@ impl RbSeries {
         }
     }
 
-    pub fn sort(&self, reverse: bool) -> Self {
-        (self.series.borrow_mut().sort(reverse)).into()
+    pub fn sort(&self, descending: bool, nulls_last: bool, multithreaded: bool) -> RbResult<Self> {
+        Ok(self
+            .series
+            .borrow_mut()
+            .sort(
+                SortOptions::default()
+                    .with_order_descending(descending)
+                    .with_nulls_last(nulls_last)
+                    .with_multithreaded(multithreaded),
+            )
+            .map_err(RbPolarsErr::from)?
+            .into())
     }
 
-    pub fn value_counts(&self, sorted: bool) -> RbResult<RbDataFrame> {
-        let df = self
+    pub fn value_counts(
+        &self,
+        sort: bool,
+        parallel: bool,
+        name: String,
+        normalize: bool,
+    ) -> RbResult<RbDataFrame> {
+        let out = self
             .series
             .borrow()
-            .value_counts(true, sorted)
+            .value_counts(sort, parallel, name.into(), normalize)
             .map_err(RbPolarsErr::from)?;
-        Ok(df.into())
+        Ok(out.into())
+    }
+
+    pub fn slice(&self, offset: i64, length: Option<usize>) -> Self {
+        let length = length.unwrap_or_else(|| self.series.borrow().len());
+        self.series.borrow().slice(offset, length).into()
     }
 
     pub fn take_with_series(&self, indices: &RbSeries) -> RbResult<Self> {
@@ -239,8 +233,8 @@ impl RbSeries {
         Ok(self.series.borrow().null_count())
     }
 
-    pub fn has_validity(&self) -> bool {
-        self.series.borrow().has_validity()
+    pub fn has_nulls(&self) -> bool {
+        self.series.borrow().has_nulls()
     }
 
     pub fn sample_n(
@@ -273,15 +267,23 @@ impl RbSeries {
         Ok(s.into())
     }
 
-    pub fn series_equal(&self, other: &RbSeries, null_equal: bool, strict: bool) -> bool {
-        if strict {
-            self.series.borrow().eq(&other.series.borrow())
-        } else if null_equal {
-            self.series
-                .borrow()
-                .series_equal_missing(&other.series.borrow())
+    pub fn equals(
+        &self,
+        other: &RbSeries,
+        check_dtypes: bool,
+        check_names: bool,
+        null_equal: bool,
+    ) -> bool {
+        if check_dtypes && (self.series.borrow().dtype() != other.series.borrow().dtype()) {
+            return false;
+        }
+        if check_names && (self.series.borrow().name() != other.series.borrow().name()) {
+            return false;
+        }
+        if null_equal {
+            self.series.borrow().equals_missing(&other.series.borrow())
         } else {
-            self.series.borrow().series_equal(&other.series.borrow())
+            self.series.borrow().equals(&other.series.borrow())
         }
     }
 
@@ -297,133 +299,6 @@ impl RbSeries {
 
     pub fn len(&self) -> usize {
         self.series.borrow().len()
-    }
-
-    pub fn to_a(&self) -> Value {
-        let series = &self.series.borrow();
-
-        fn to_a_recursive(series: &Series) -> Value {
-            let rblist = match series.dtype() {
-                DataType::Boolean => RArray::from_iter(series.bool().unwrap()).into_value(),
-                DataType::UInt8 => RArray::from_iter(series.u8().unwrap()).into_value(),
-                DataType::UInt16 => RArray::from_iter(series.u16().unwrap()).into_value(),
-                DataType::UInt32 => RArray::from_iter(series.u32().unwrap()).into_value(),
-                DataType::UInt64 => RArray::from_iter(series.u64().unwrap()).into_value(),
-                DataType::Int8 => RArray::from_iter(series.i8().unwrap()).into_value(),
-                DataType::Int16 => RArray::from_iter(series.i16().unwrap()).into_value(),
-                DataType::Int32 => RArray::from_iter(series.i32().unwrap()).into_value(),
-                DataType::Int64 => RArray::from_iter(series.i64().unwrap()).into_value(),
-                DataType::Float32 => RArray::from_iter(series.f32().unwrap()).into_value(),
-                DataType::Float64 => RArray::from_iter(series.f64().unwrap()).into_value(),
-                DataType::Categorical(_) => {
-                    RArray::from_iter(series.categorical().unwrap().iter_str()).into_value()
-                }
-                DataType::Object(_) => {
-                    let v = RArray::with_capacity(series.len());
-                    for i in 0..series.len() {
-                        let obj: Option<&ObjectValue> = series.get_object(i).map(|any| any.into());
-                        match obj {
-                            Some(val) => v.push(val.to_object()).unwrap(),
-                            None => v.push(qnil()).unwrap(),
-                        };
-                    }
-                    v.into_value()
-                }
-                DataType::List(_) => {
-                    let v = RArray::new();
-                    let ca = series.list().unwrap();
-                    for opt_s in unsafe { ca.amortized_iter() } {
-                        match opt_s {
-                            None => {
-                                v.push(qnil()).unwrap();
-                            }
-                            Some(s) => {
-                                let rblst = to_a_recursive(s.as_ref());
-                                v.push(rblst).unwrap();
-                            }
-                        }
-                    }
-                    v.into_value()
-                }
-                DataType::Array(_, _) => {
-                    let v = RArray::new();
-                    let ca = series.array().unwrap();
-                    for opt_s in ca.amortized_iter() {
-                        match opt_s {
-                            None => {
-                                v.push(qnil()).unwrap();
-                            }
-                            Some(s) => {
-                                let rblst = to_a_recursive(s.as_ref());
-                                v.push(rblst).unwrap();
-                            }
-                        }
-                    }
-                    v.into_value()
-                }
-                DataType::Date => {
-                    let ca = series.date().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Time => {
-                    let ca = series.time().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Datetime(_, _) => {
-                    let ca = series.datetime().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Decimal(_, _) => {
-                    let ca = series.decimal().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Utf8 => {
-                    let ca = series.utf8().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Struct(_) => {
-                    let ca = series.struct_().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Duration(_) => {
-                    let ca = series.duration().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Binary => {
-                    let ca = series.binary().unwrap();
-                    return Wrap(ca).into_value();
-                }
-                DataType::Null => {
-                    let null: Option<u8> = None;
-                    let n = series.len();
-                    let iter = std::iter::repeat(null).take(n);
-                    use std::iter::{Repeat, Take};
-                    struct NullIter {
-                        iter: Take<Repeat<Option<u8>>>,
-                        n: usize,
-                    }
-                    impl Iterator for NullIter {
-                        type Item = Option<u8>;
-
-                        fn next(&mut self) -> Option<Self::Item> {
-                            self.iter.next()
-                        }
-                        fn size_hint(&self) -> (usize, Option<usize>) {
-                            (self.n, Some(self.n))
-                        }
-                    }
-                    impl ExactSizeIterator for NullIter {}
-
-                    RArray::from_iter(NullIter { iter, n }).into_value()
-                }
-                DataType::Unknown => {
-                    panic!("to_a not implemented for null/unknown")
-                }
-            };
-            rblist
-        }
-
-        to_a_recursive(series)
     }
 
     pub fn clone(&self) -> Self {
@@ -442,7 +317,7 @@ impl RbSeries {
 
         macro_rules! dispatch_apply {
             ($self:expr, $method:ident, $($args:expr),*) => {
-                if matches!($self.dtype(), DataType::Object(_)) {
+                if matches!($self.dtype(), DataType::Object(_, _)) {
                     // let ca = $self.0.unpack::<ObjectType<ObjectValue>>().unwrap();
                     // ca.$method($($args),*)
                     todo!()
@@ -463,7 +338,7 @@ impl RbSeries {
             DataType::Datetime(_, _)
                 | DataType::Date
                 | DataType::Duration(_)
-                | DataType::Categorical(_)
+                | DataType::Categorical(_, _)
                 | DataType::Time
         ) || !skip_nulls
         {
@@ -475,7 +350,7 @@ impl RbSeries {
                     .0
             });
             avs.extend(iter);
-            return Ok(Series::new(&self.name(), &avs).into());
+            return Ok(Series::new(self.name().into(), &avs).into());
         }
 
         let out = match output_type {
@@ -604,12 +479,12 @@ impl RbSeries {
                 )?;
                 ca.into_datetime(tu, tz).into_series()
             }
-            Some(DataType::Utf8) => {
+            Some(DataType::String) => {
                 let ca = dispatch_apply!(series, apply_lambda_with_utf8_out_type, lambda, 0, None)?;
 
                 ca.into_series()
             }
-            Some(DataType::Object(_)) => {
+            Some(DataType::Object(_, _)) => {
                 let ca =
                     dispatch_apply!(series, apply_lambda_with_object_out_type, lambda, 0, None)?;
                 ca.into_series()
@@ -656,8 +531,13 @@ impl RbSeries {
         self.series.borrow_mut().shrink_to_fit();
     }
 
-    pub fn dot(&self, other: &RbSeries) -> Option<f64> {
-        self.series.borrow().dot(&other.series.borrow())
+    pub fn dot(&self, other: &RbSeries) -> RbResult<f64> {
+        let out = self
+            .series
+            .borrow()
+            .dot(&other.series.borrow())
+            .map_err(RbPolarsErr::from)?;
+        Ok(out)
     }
 
     pub fn skew(&self, bias: bool) -> RbResult<Option<f64>> {

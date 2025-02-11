@@ -37,6 +37,19 @@ class DatabaseTest < Minitest::Test
     assert_result df, users
   end
 
+  def test_read_database_schema_overrides
+    create_users
+
+    df = Polars.read_database("SELECT id FROM users ORDER BY id")
+    assert_equal Polars::Int64, df["id"].dtype
+
+    df = Polars.read_database("SELECT id FROM users ORDER BY id", schema_overrides: {"id" => Polars::Int16})
+    assert_equal Polars::Int16, df["id"].dtype
+
+    df = Polars.read_database("SELECT id FROM users ORDER BY id", schema_overrides: {id: Polars::Int16})
+    assert_equal Polars::Int16, df["id"].dtype
+  end
+
   def test_read_database_null
     User.create!
     df = Polars.read_database("SELECT * FROM users ORDER BY id")
@@ -54,6 +67,16 @@ class DatabaseTest < Minitest::Test
       Polars.read_database(Object.new)
     end
     assert_equal "Expected ActiveRecord::Relation, ActiveRecord::Result, or String", error.message
+  end
+
+  def test_connection_leasing
+    ActiveRecord::Base.connection_handler.clear_active_connections!
+    assert_nil ActiveRecord::Base.connection_pool.active_connection?
+    ActiveRecord::Base.connection_pool.with_connection do
+      Polars.read_database(User.order(:id))
+      Polars.read_database("SELECT * FROM users ORDER BY id")
+    end
+    assert_nil ActiveRecord::Base.connection_pool.active_connection?
   end
 
   private
@@ -84,28 +107,33 @@ class DatabaseTest < Minitest::Test
     schema = df.schema
 
     assert_equal Polars::Int64, schema["id"]
-    assert_equal Polars::Utf8, schema["name"]
+    assert_equal Polars::String, schema["name"]
     assert_equal Polars::Int64, schema["number"]
     assert_equal Polars::Float64, schema["inexact"]
     assert_equal Polars::Binary, schema["bin"]
-    assert_equal Polars::Utf8, schema["txt"]
+    assert_equal Polars::String, schema["txt"]
 
     if postgresql?
       assert_equal Polars::Boolean, schema["active"]
       assert_equal Polars::Datetime, schema["joined_at"]
       assert_equal Polars::Decimal, schema["dec"]
       assert_equal Polars::Time, schema["joined_time"]
+      # TODO fix for null
+      # assert_equal Polars::Struct, schema["settings"]
     else
       assert_equal Polars::Int64, schema["active"]
-      assert_equal Polars::Utf8, schema["joined_at"]
+      assert_equal Polars::String, schema["joined_at"]
       assert_equal Polars::Float64, schema["dec"]
-      assert_equal Polars::Utf8, schema["joined_time"]
+      assert_equal Polars::String, schema["joined_time"]
+      assert_equal Polars::String, schema["settings"]
     end
   end
 
   def create_users
     # round time since Postgres only stores microseconds
     now = postgresql? ? Time.now.round(6) : Time.now
+    # TODO fix nil
+    settings = [{"hello" => "world"}, {}, {}]
     3.times do |i|
       User.create!(
         name: "User #{i}",
@@ -117,7 +145,8 @@ class DatabaseTest < Minitest::Test
         bin: "bin".b,
         dec: BigDecimal("1.5"),
         txt: "txt",
-        joined_time: now
+        joined_time: now,
+        settings: settings[i]
       )
     end
     # reload for time column

@@ -1,8 +1,8 @@
-# Polars Ruby
+# Ruby Polars
 
-:fire: Blazingly fast DataFrames for Ruby, powered by [Polars](https://github.com/pola-rs/polars)
+🔥 Blazingly fast DataFrames for Ruby, powered by [Polars](https://github.com/pola-rs/polars)
 
-[![Build Status](https://github.com/ankane/polars-ruby/workflows/build/badge.svg?branch=master)](https://github.com/ankane/polars-ruby/actions)
+[![Build Status](https://github.com/ankane/ruby-polars/actions/workflows/build.yml/badge.svg)](https://github.com/ankane/ruby-polars/actions)
 
 ## Installation
 
@@ -14,18 +14,17 @@ gem "polars-df"
 
 ## Getting Started
 
-This library follows the [Polars Python API](https://pola-rs.github.io/polars/py-polars/html/reference/index.html).
+This library follows the [Polars Python API](https://docs.pola.rs/api/python/stable/reference/index.html).
 
 ```ruby
-Polars.read_csv("iris.csv")
-  .lazy
+Polars.scan_csv("iris.csv")
   .filter(Polars.col("sepal_length") > 5)
-  .groupby("species")
+  .group_by("species")
   .agg(Polars.all.sum)
   .collect
 ```
 
-You can follow [Polars tutorials](https://pola-rs.github.io/polars-book/user-guide/) and convert the code to Ruby in many cases. Feel free to open an issue if you run into problems.
+You can follow [Polars tutorials](https://docs.pola.rs/user-guide/getting-started/) and convert the code to Ruby in many cases. Feel free to open an issue if you run into problems.
 
 ## Reference
 
@@ -87,6 +86,15 @@ From Avro
 
 ```ruby
 Polars.read_avro("file.avro")
+```
+
+From Delta Lake (requires [deltalake-rb](https://github.com/ankane/delta-ruby)) [experimental]
+
+```ruby
+Polars.read_delta("./table")
+
+# or lazily with
+Polars.scan_delta("./table")
 ```
 
 From a hash
@@ -260,19 +268,19 @@ df["a"].var
 Group
 
 ```ruby
-df.groupby("a").count
+df.group_by("a").count
 ```
 
 Works with all summary statistics
 
 ```ruby
-df.groupby("a").max
+df.group_by("a").max
 ```
 
 Multiple groups
 
 ```ruby
-df.groupby(["a", "b"]).count
+df.group_by(["a", "b"]).count
 ```
 
 ## Combining Data Frames
@@ -337,6 +345,32 @@ Parquet
 df.write_parquet("file.parquet")
 ```
 
+JSON
+
+```ruby
+df.write_json("file.json")
+# or
+df.write_ndjson("file.ndjson")
+```
+
+Feather / Arrow IPC
+
+```ruby
+df.write_ipc("file.arrow")
+```
+
+Avro
+
+```ruby
+df.write_avro("file.avro")
+```
+
+Delta Lake [experimental]
+
+```ruby
+df.write_delta("./table")
+```
+
 Numo array
 
 ```ruby
@@ -357,7 +391,7 @@ Supported types are:
 - float - `Float64`, `Float32`
 - integer - `Int64`, `Int32`, `Int16`, `Int8`
 - unsigned integer - `UInt64`, `UInt32`, `UInt16`, `UInt8`
-- string - `Utf8`, `Binary`, `Categorical`
+- string - `String`, `Binary`, `Categorical`
 - temporal - `Date`, `Datetime`, `Time`, `Duration`
 - nested -  `List`, `Struct`, `Array`
 - other - `Object`, `Null`
@@ -403,34 +437,35 @@ df.plot("a", "b", type: "pie")
 Group data
 
 ```ruby
-df.groupby("c").plot("a", "b")
+df.group_by("c").plot("a", "b")
 ```
 
 Stacked columns or bars
 
 ```ruby
-df.groupby("c").plot("a", "b", stacked: true)
+df.group_by("c").plot("a", "b", stacked: true)
 ```
 
 ## History
 
-View the [changelog](CHANGELOG.md)
+View the [changelog](https://github.com/ankane/ruby-polars/blob/master/CHANGELOG.md)
 
 ## Contributing
 
 Everyone is encouraged to help improve this project. Here are a few ways you can help:
 
-- [Report bugs](https://github.com/ankane/polars-ruby/issues)
-- Fix bugs and [submit pull requests](https://github.com/ankane/polars-ruby/pulls)
+- [Report bugs](https://github.com/ankane/ruby-polars/issues)
+- Fix bugs and [submit pull requests](https://github.com/ankane/ruby-polars/pulls)
 - Write, clarify, or fix documentation
 - Suggest or add new features
 
 To get started with development:
 
 ```sh
-git clone https://github.com/ankane/polars-ruby.git
-cd polars-ruby
+git clone https://github.com/ankane/ruby-polars.git
+cd ruby-polars
 bundle install
 bundle exec rake compile
 bundle exec rake test
+bundle exec rake test:docs
 ```

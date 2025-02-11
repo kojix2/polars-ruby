@@ -1,10 +1,10 @@
 [package]
 name = "polars"
-version = "0.6.0"
+version = "0.17.0"
 license = "MIT"
 authors = ["Andrew Kane <andrew@ankane.org>"]
 edition = "2021"
-rust-version = "1.73.0"
+rust-version = "1.80.0"
 publish = false
 
 [lib]
@@ -12,55 +12,81 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ahash = "0.8"
+arrow = { package = "polars-arrow", version = "=0.46.0" }
+bytes = "1"
 chrono = "0.4"
 either = "1.8"
-magnus = "0.6"
-polars-core = "=0.34.2"
+magnus = "0.7"
+polars-core = "=0.46.0"
+polars-plan = "=0.46.0"
+polars-parquet = "=0.46.0"
+polars-utils = "=0.46.0"
+rayon = "1.9"
+regex = "1"
 serde_json = "1"
-smartstring = "1"
 
 [dependencies.polars]
-version = "=0.34.2"
+version = "=0.46.0"
 features = [
     "abs",
     "approx_unique",
     "arg_where",
+    "array_any_all",
+    "array_count",
     "asof_join",
     "avro",
+    "aws",
+    "azure",
     "binary_encoding",
+    "business",
+    "cloud",
     "concat_str",
+    "cov",
+    "cross_join",
     "cse",
     "csv",
     "cum_agg",
     "cumulative_eval",
+    "cutqcut",
     "dataframe_arithmetic",
-    "date_offset",
     "diagonal_concat",
     "diff",
     "dot_product",
     "dtype-full",
     "dynamic_group_by",
     "ewma",
+    "ewma_by",
+    "extract_groups",
     "extract_jsonpath",
+    "find_many",
     "fmt",
-    "horizontal_concat",
+    "gcp",
+    "http",
     "interpolate",
     "ipc",
+    "ipc_streaming",
+    "is_between",
     "is_first_distinct",
     "is_in",
     "is_last_distinct",
     "is_unique",
     "json",
     "lazy",
-    "lazy_regex",
+    "list_any_all",
     "list_count",
+    "list_drop_nulls",
     "list_eval",
-    "list_take",
+    "list_gather",
+    "list_sample",
     "list_to_struct",
     "log",
+    "merge_sorted",
     "meta",
     "mode",
     "moment",
+    "month_start",
+    "month_end",
+    "offset_by",
     "object",
     "parquet",
     "partition_by",
@@ -73,9 +99,13 @@ features = [
     "random",
     "rank",
     "range",
+    "regex",
     "reinterpret",
     "repeat_by",
+    "replace",
+    "rle",
     "rolling_window",
+    "rolling_window_by",
     "round_series",
     "row_hash",
     "search_sorted",
@@ -84,8 +114,8 @@ features = [
     "sign",
     "sql",
     "string_encoding",
-    "string_from_radix",
     "string_pad",
+    "string_to_integer",
     "strings",
     "timezones",
     "to_dummies",
@@ -97,5 +127,5 @@ features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 jemallocator = { version = "0.5", features = ["disable_initial_exec_tls"] }
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(not(any(target_os = "linux", target_os = "windows")))'.dependencies]
 mimalloc = { version = "0.1", default-features = false }

@@ -1,45 +1,50 @@
-use magnus::exception;
+use std::fmt::{Debug, Formatter};
+
 use magnus::Error;
 use polars::prelude::PolarsError;
 
-pub struct RbPolarsErr {}
+use crate::exceptions::{ComputeError, InvalidOperationError};
+use crate::rb_modules;
 
-impl RbPolarsErr {
-    // convert to Error instead of Self
-    pub fn from(e: PolarsError) -> Error {
-        Error::new(exception::runtime_error(), e.to_string())
-    }
+pub enum RbPolarsErr {
+    Polars(PolarsError),
+    Other(String),
+}
 
-    pub fn io(e: std::io::Error) -> Error {
-        Error::new(exception::runtime_error(), e.to_string())
-    }
-
-    pub fn other(message: String) -> Error {
-        Error::new(exception::runtime_error(), message)
+impl From<PolarsError> for RbPolarsErr {
+    fn from(err: PolarsError) -> Self {
+        RbPolarsErr::Polars(err)
     }
 }
 
-pub struct RbTypeError {}
-
-impl RbTypeError {
-    pub fn new_err(message: String) -> Error {
-        Error::new(exception::type_error(), message)
+impl From<std::io::Error> for RbPolarsErr {
+    fn from(value: std::io::Error) -> Self {
+        RbPolarsErr::Other(format!("{value:?}"))
     }
 }
 
-pub struct RbValueError {}
-
-impl RbValueError {
-    pub fn new_err(message: String) -> Error {
-        Error::new(exception::arg_error(), message)
+impl From<RbPolarsErr> for Error {
+    fn from(err: RbPolarsErr) -> Self {
+        match err {
+            RbPolarsErr::Polars(err) => match err {
+                PolarsError::ComputeError(err) => ComputeError::new_err(err.to_string()),
+                PolarsError::InvalidOperation(err) => {
+                    InvalidOperationError::new_err(err.to_string())
+                }
+                _ => Error::new(rb_modules::error(), err.to_string()),
+            },
+            RbPolarsErr::Other(err) => Error::new(rb_modules::error(), err.to_string()),
+        }
     }
 }
 
-pub struct ComputeError {}
-
-impl ComputeError {
-    pub fn new_err(message: String) -> Error {
-        Error::new(exception::runtime_error(), message)
+impl Debug for RbPolarsErr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use RbPolarsErr::*;
+        match self {
+            Polars(err) => write!(f, "{err:?}"),
+            Other(err) => write!(f, "BindingsError: {err:?}"),
+        }
     }
 }
 

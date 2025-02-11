@@ -1,6 +1,138 @@
-## 0.7.0 (unreleased)
+## 0.17.0 (2025-01-28)
 
-- Updated Polars to 0.34.2
+- Updated Polars to 0.46.0
+- Changed `write_json` method for `DataFrame` to be row-oriented
+- Fixed error with `Series` constructor and `strict: false`
+
+## 0.16.0 (2024-12-29)
+
+- Updated Polars to 0.45.1
+- Added support for Ruby 3.4
+- Added experimental support for Delta Lake
+- Added `by_name` selector
+- Added `thread_pool_size` method to `Polars`
+- Removed `axis` option from `min`, `max`, `sum`, and `mean` methods (use `*_horizontal` instead)
+- Dropped support for Ruby < 3.2
+
+## 0.15.0 (2024-11-20)
+
+- Updated Polars to 0.44.2
+- I/O methods no longer require a `URI` object for remote files
+- Added support for scanning files from cloud storage
+- Added experimental support for Arrow C streams
+- Added selectors
+- Added `config`, `string_cache`, and `cs` methods to `Polars`
+- Added `strict` option to `DataFrame` constructor
+- Added `compat_level` option to `write_ipc` and `write_ipc_stream` methods
+- Added `name` option to `write_avro` method
+- Added support for array of name-type pairs to `schema` option
+- Added `cast` method to `DataFrame` and `LazyFrame`
+- Added `coalesce` option to `join` and `join_asof` methods
+- Added `validate` option to `join` method
+- Added `strict` option to `rename` method
+- Changed `rechunk` option default from `true` to `false` for `scan_parquet` method
+- Fixed `limit` method for `LazyFrame`
+- Fixed `read_database` connection leasing for Active Record 7.2
+- Removed `get_dummies` method from `Polars` (use `df.to_dummies` instead)
+- Removed `to_list` method from `Polars` (use `col(name).list` instead)
+- Removed `spearman_rank_corr` method from `Polars` (use `corr(method: "spearman")` instead)
+- Removed `pearson_corr` method from `Polars` (use `corr(method: "pearson")` instead)
+- Removed `inner_dtype` and `time_unit` methods from `Series`
+
+## 0.14.0 (2024-09-17)
+
+- Updated Polars to 0.43.1
+- Fixed `frac` option for `sample` method
+
+## 0.13.0 (2024-09-04)
+
+- Updated Polars to 0.42.0
+- Added precompiled gem for Linux ARM MUSL
+- Added precompiled gem for Windows
+
+## 0.12.0 (2024-07-11)
+
+- Updated Polars to 0.41.3
+- Added `nth` method to `Polars`
+- Added `get` method to `Expr`
+- Added `check_names` option to `equals` method
+- Improved `struct` method
+- Aliased `melt` to `unpivot` for `DataFrame` and `LazyFrame`
+- Changed signature of `pivot` and `melt` methods
+- Changed signature of `date_range` and `date_ranges` methods
+- Changed `set_sorted` method to only accept a single column
+- Removed `use_earliest` option from `replace_time_zone` and `to_datetime` methods (use `ambiguous` instead)
+- Removed `by` and `closed` options from `rolling_*` methods (use `rolling_*_by` instead)
+- Removed `explode` method from `StringExpr` (use `split("").explode` instead)
+- Removed `set_ordering` method from `CatExpr`
+
+## 0.11.0 (2024-06-02)
+
+- Updated Polars to 0.40.0
+- Added `date_ranges` method to `Polars`
+- Added `read_ipc_stream` method to `Polars`
+- Added `write_ipc_stream` to `DataFrame`
+- Added `flags` method to `DataFrame`
+- Added support for keyword arguments to `agg` methods
+- Aliased `apply` to `map_rows` for `DataFrame`
+- Changed default `name` for `with_row_index` from `row_nr` to `index`
+
+## 0.10.0 (2024-05-02)
+
+- Updated Polars to 0.39.2
+- Added support for writing JSON to string
+- Added support for writing Parquet to `StringIO`
+- Added support for cross joins
+- Added `data_page_size` option to `write_parquet` method
+- Added `truncate_ragged_lines` option to `read_csv`, `read_csv_batched`, and `scan_csv` methods
+- Added precompiled gem for Linux x86-64 MUSL
+- Changed `drop` method to ignore missing columns
+- Fixed error with `then` method
+
+## 0.9.0 (2024-03-03)
+
+See the [upgrade guide](https://docs.pola.rs/releases/upgrade/0.20/)
+
+- Updated Polars to 0.38.1
+- Changed `count` method to exclude null values
+- Changed `dtype` and `schema` methods to always return instances of data types
+- Added `Enum` type
+- Added `Testing` module
+- Added `arctan2`, `arctan2d`, `set_random_seed`, and `sql_expr` methods to `Polars`
+- Added `enable_string_cache`, `disable_string_cache`, and `using_string_cache` to `Polars`
+- Added methods for horizontal aggregations to `Polars`
+- Added `sink_ipc`, `sink_csv`, and `sink_ndjson` methods to `LazyFrame`
+- Added `replace` method to `Series` and `Expr`
+- Added `eq`, `eq_missing`, `ne`, and `ne_missing` methods to `Series` and `Expr`
+- Added `ge`, `gt`, `le`, and `lt` methods to `Series` and `Expr`
+- Added `merge_sorted` method to `DataFrame` and `LazyFrame`
+- Added more methods to `ArrayExpr` and `ArrayNameSpace`
+- Added more methods to `CatExpr` and `CatNameSpace`
+- Added more methods to `ListExpr` and `ListNameSpace`
+- Added more methods to `MetaExpr`
+- Added more methods to `StringExpr`
+- Added `schema_overrides` option to `read_database` method
+- Added `join_nulls` option to `join` method
+- Added `ignore_nulls` option to `any` and `all` methods
+- Aliased `apply` to `map_elements` for `Series`
+- Aliased `cleared` to `clear` for `DataFrame` and `LazyFrame`
+- Fixed error with `BigDecimal` objects
+
+## 0.8.0 (2024-01-10)
+
+- Updated Polars to 0.36.2
+- Added support for Ruby 3.3
+- Added warning to `count` method for `Series` and `Expr` about excluding null values in 0.9.0
+- Added `cut` and `qcut` methods to `Series` and `Expr`
+- Added `rle` and `rle_id` methods to `Series` and `Expr`
+- Added `bottom_k` method to `Series`
+- Aliased `Utf8` data type to `String`
+- Fixed error with `top_k` method
+- Dropped support for Ruby < 3.1
+
+## 0.7.0 (2023-11-17)
+
+- Updated Polars to 0.35.2
 - Added support for SQL querying
 - Added `!` for `Expr`
 - Added `Config` module

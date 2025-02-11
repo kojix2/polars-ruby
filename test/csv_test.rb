@@ -22,8 +22,6 @@ class CsvTest < Minitest::Test
   end
 
   def test_read_csv_io
-    require "stringio"
-
     io = StringIO.new(File.binread("test/support/data.csv"))
     df = Polars.read_csv(io)
     expected = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
@@ -38,17 +36,13 @@ class CsvTest < Minitest::Test
   end
 
   def test_read_csv_http
-    error = assert_raises(ArgumentError) do
-      Polars.read_csv("http://www.example.com")
-    end
-    assert_equal "use URI(...) for remote files", error.message
+    # skip remote call
+    # Polars.read_csv("http://...")
   end
 
   def test_read_csv_https
-    error = assert_raises(ArgumentError) do
-      Polars.read_csv("https://www.example.com")
-    end
-    assert_equal "use URI(...) for remote files", error.message
+    # skip remote call
+    # Polars.read_csv("https://...")
   end
 
   def test_read_csv_glob
@@ -60,10 +54,11 @@ class CsvTest < Minitest::Test
   end
 
   def test_read_csv_glob_mismatch
-    error = assert_raises(RuntimeError) do
+    # TODO use ComputeError
+    error = assert_raises(Polars::Error) do
       Polars.read_csv("test/support/*.csv")
     end
-    assert_match "lengths don't match", error.message
+    assert_match "schema lengths differ", error.message
   end
 
   def test_read_csv_batched
@@ -77,6 +72,13 @@ class CsvTest < Minitest::Test
 
   def test_scan_csv
     df = Polars.scan_csv("test/support/data.csv")
+    expected = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
+    assert_frame expected, df.collect
+  end
+
+  def test_scan_csv_io
+    io = StringIO.new(File.binread("test/support/data.csv"))
+    df = Polars.scan_csv(io)
     expected = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
     assert_frame expected, df.collect
   end
@@ -96,6 +98,14 @@ class CsvTest < Minitest::Test
   def test_to_csv
     df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
     assert_equal "a,b\n1,one\n2,two\n3,three\n", df.to_csv
+  end
+
+  def test_sink_csv
+    df = Polars::DataFrame.new({"a" => [1, 2, 3], "b" => ["one", "two", "three"]})
+    path = temp_path
+    assert_nil df.lazy.sink_csv(path)
+    assert_equal "a,b\n1,one\n2,two\n3,three\n", File.read(path)
+    assert_frame df, Polars.read_csv(path)
   end
 
   def test_has_header_true

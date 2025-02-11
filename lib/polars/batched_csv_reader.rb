@@ -13,6 +13,7 @@ module Polars
       skip_rows: 0,
       dtypes: nil,
       null_values: nil,
+      missing_utf8_is_empty_string: false,
       ignore_errors: false,
       parse_dates: false,
       n_threads: nil,
@@ -25,12 +26,14 @@ module Polars
       skip_rows_after_header: 0,
       row_count_name: nil,
       row_count_offset: 0,
-      sample_size: 1024,
       eol_char: "\n",
-      new_columns: nil
+      new_columns: nil,
+      raise_if_empty: true,
+      truncate_ragged_lines: false,
+      decimal_comma: false
     )
       if Utils.pathlike?(file)
-        path = Utils.normalise_filepath(file)
+        path = Utils.normalize_filepath(file)
       end
 
       dtype_list = nil
@@ -38,7 +41,7 @@ module Polars
       if !dtypes.nil?
         if dtypes.is_a?(Hash)
           dtype_list = []
-          dtypes.each do|k, v|
+          dtypes.each do |k, v|
             dtype_list << [k, Utils.rb_type_to_dtype(v)]
           end
         elsif dtypes.is_a?(::Array)
@@ -71,11 +74,14 @@ module Polars
         comment_char,
         quote_char,
         processed_null_values,
+        missing_utf8_is_empty_string,
         parse_dates,
         skip_rows_after_header,
-        Utils._prepare_row_count_args(row_count_name, row_count_offset),
-        sample_size,
-        eol_char
+        Utils.parse_row_index_args(row_count_name, row_count_offset),
+        eol_char,
+        raise_if_empty,
+        truncate_ragged_lines,
+        decimal_comma
       )
       self.new_columns = new_columns
     end

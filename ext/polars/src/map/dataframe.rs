@@ -7,13 +7,16 @@ use super::*;
 use crate::{RbDataFrame, RbPolarsErr, RbSeries, Wrap};
 
 fn get_iters(df: &DataFrame) -> Vec<SeriesIter> {
-    df.get_columns().iter().map(|s| s.iter()).collect()
+    df.get_columns()
+        .iter()
+        .map(|s| s.as_materialized_series().iter())
+        .collect()
 }
 
 fn get_iters_skip(df: &DataFrame, skip: usize) -> Vec<std::iter::Skip<SeriesIter>> {
     df.get_columns()
         .iter()
-        .map(|s| s.iter().skip(skip))
+        .map(|s| s.as_materialized_series().iter().skip(skip))
         .collect()
 }
 
@@ -113,16 +116,17 @@ pub fn apply_lambda_unknown<'a>(
                 true,
             ));
         } else if out.is_kind_of(class::array()) {
-            return Err(RbPolarsErr::other(
+            return Err(RbPolarsErr::Other(
                 "A list output type is invalid. Do you mean to create polars List Series?\
 Then return a Series object."
                     .into(),
-            ));
+            )
+            .into());
         } else {
-            return Err(RbPolarsErr::other("Could not determine output type".into()));
+            return Err(RbPolarsErr::Other("Could not determine output type".into()).into());
         }
     }
-    Err(RbPolarsErr::other("Could not determine output type".into()))
+    Err(RbPolarsErr::Other("Could not determine output type".into()).into())
 }
 
 fn apply_iter<T>(
@@ -158,10 +162,16 @@ where
 {
     let skip = usize::from(first_value.is_some());
     if init_null_count == df.height() {
-        ChunkedArray::full_null("apply", df.height())
+        ChunkedArray::full_null(PlSmallStr::from_static("map"), df.height())
     } else {
         let iter = apply_iter(df, lambda, init_null_count, skip);
-        iterator_to_primitive(iter, init_null_count, first_value, "apply", df.height())
+        iterator_to_primitive(
+            iter,
+            init_null_count,
+            first_value,
+            PlSmallStr::from_static("map"),
+            df.height(),
+        )
     }
 }
 
@@ -174,10 +184,16 @@ pub fn apply_lambda_with_bool_out_type(
 ) -> ChunkedArray<BooleanType> {
     let skip = usize::from(first_value.is_some());
     if init_null_count == df.height() {
-        ChunkedArray::full_null("apply", df.height())
+        ChunkedArray::full_null(PlSmallStr::from_static("map"), df.height())
     } else {
         let iter = apply_iter(df, lambda, init_null_count, skip);
-        iterator_to_bool(iter, init_null_count, first_value, "apply", df.height())
+        iterator_to_bool(
+            iter,
+            init_null_count,
+            first_value,
+            PlSmallStr::from_static("map"),
+            df.height(),
+        )
     }
 }
 
@@ -187,13 +203,19 @@ pub fn apply_lambda_with_utf8_out_type(
     lambda: Value,
     init_null_count: usize,
     first_value: Option<&str>,
-) -> Utf8Chunked {
+) -> StringChunked {
     let skip = usize::from(first_value.is_some());
     if init_null_count == df.height() {
-        ChunkedArray::full_null("apply", df.height())
+        ChunkedArray::full_null(PlSmallStr::from_static("map"), df.height())
     } else {
         let iter = apply_iter::<String>(df, lambda, init_null_count, skip);
-        iterator_to_utf8(iter, init_null_count, first_value, "apply", df.height())
+        iterator_to_utf8(
+            iter,
+            init_null_count,
+            first_value,
+            PlSmallStr::from_static("map"),
+            df.height(),
+        )
     }
 }
 
@@ -207,7 +229,10 @@ pub fn apply_lambda_with_list_out_type(
 ) -> RbResult<ListChunked> {
     let skip = usize::from(first_value.is_some());
     if init_null_count == df.height() {
-        Ok(ChunkedArray::full_null("apply", df.height()))
+        Ok(ChunkedArray::full_null(
+            PlSmallStr::from_static("map"),
+            df.height(),
+        ))
     } else {
         let mut iters = get_iters_skip(df, init_null_count + skip);
         let iter = ((init_null_count + skip)..df.height()).map(|_| {
@@ -229,7 +254,14 @@ pub fn apply_lambda_with_list_out_type(
                 Err(e) => panic!("ruby function failed {}", e),
             }
         });
-        iterator_to_list(dt, iter, init_null_count, first_value, "apply", df.height())
+        iterator_to_list(
+            dt,
+            iter,
+            init_null_count,
+            first_value,
+            PlSmallStr::from_static("map"),
+            df.height(),
+        )
     }
 }
 
@@ -255,8 +287,8 @@ pub fn apply_lambda_with_rows_output<'a>(
                 match RArray::try_convert(val).ok() {
                     Some(tuple) => {
                         row_buf.0.clear();
-                        for v in tuple.each() {
-                            let v = Wrap::<AnyValue>::try_convert(v.unwrap()).unwrap().0;
+                        for v in tuple.into_iter() {
+                            let v = Wrap::<AnyValue>::try_convert(v).unwrap().0;
                             row_buf.0.push(v);
                         }
                         let ptr = &row_buf as *const Row;
@@ -265,9 +297,9 @@ pub fn apply_lambda_with_rows_output<'a>(
                         // to the row. Before we mutate the row buf again, the reference is dropped.
                         // we only cannot prove it to the compiler.
                         // we still do this because it saves a Vec allocation in a hot loop.
-                        unsafe { &*ptr }
+                        Ok(unsafe { &*ptr })
                     }
-                    None => &null_row,
+                    None => Ok(&null_row),
                 }
             }
             Err(e) => panic!("ruby function failed {}", e),
@@ -277,22 +309,30 @@ pub fn apply_lambda_with_rows_output<'a>(
     // first rows for schema inference
     let mut buf = Vec::with_capacity(inference_size);
     buf.push(first_value);
-    buf.extend((&mut row_iter).take(inference_size).cloned());
-    let schema = rows_to_schema_first_non_null(&buf, Some(50));
+    for v in (&mut row_iter).take(inference_size) {
+        buf.push(v?.clone());
+    }
+
+    let schema = rows_to_schema_first_non_null(&buf, Some(50))?;
 
     if init_null_count > 0 {
         // Safety: we know the iterators size
         let iter = unsafe {
             (0..init_null_count)
-                .map(|_| &null_row)
-                .chain(buf.iter())
+                .map(|_| Ok(&null_row))
+                .chain(buf.iter().map(Ok))
                 .chain(row_iter)
                 .trust_my_length(df.height())
         };
-        DataFrame::from_rows_iter_and_schema(iter, &schema)
+        DataFrame::try_from_rows_iter_and_schema(iter, &schema)
     } else {
         // Safety: we know the iterators size
-        let iter = unsafe { buf.iter().chain(row_iter).trust_my_length(df.height()) };
-        DataFrame::from_rows_iter_and_schema(iter, &schema)
+        let iter = unsafe {
+            buf.iter()
+                .map(Ok)
+                .chain(row_iter)
+                .trust_my_length(df.height())
+        };
+        DataFrame::try_from_rows_iter_and_schema(iter, &schema)
     }
 }

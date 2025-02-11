@@ -8,17 +8,49 @@ module Polars
 
     # Create a new DataFrame.
     #
-    # @param data [Hash, Array, Series, nil]
-    #   Two-dimensional data in various forms. Hash must contain Arrays.
-    #   Array may contain Series.
-    # @param columns [Array, Hash, nil]
-    #   Column labels to use for resulting DataFrame. If specified, overrides any
-    #   labels already present in the data. Must match data dimensions.
-    # @param orient ["col", "row", nil]
-    #   Whether to interpret two-dimensional data as columns or as rows. If `nil`,
+    # @param data [Object]
+    #   Two-dimensional data in various forms; hash input must contain arrays
+    #   or a range. Arrays may contain Series or other arrays.
+    # @param schema [Object]
+    #   The schema of the resulting DataFrame. The schema may be declared in several
+    #   ways:
+    #
+    #   * As a hash of name:type pairs; if type is nil, it will be auto-inferred.
+    #   * As an array of column names; in this case types are automatically inferred.
+    #   * As an array of (name,type) pairs; this is equivalent to the dictionary form.
+    #
+    #   If you supply a list of column names that does not match the names in the
+    #   underlying data, the names given here will overwrite them. The number
+    #   of names given in the schema should match the underlying data dimensions.
+    #
+    #   If set to `nil` (default), the schema is inferred from the data.
+    # @param schema_overrides [Hash]
+    #   Support type specification or override of one or more columns; note that
+    #   any dtypes inferred from the schema param will be overridden.
+    #
+    #   The number of entries in the schema should match the underlying data
+    #   dimensions, unless an array of hashes is being passed, in which case
+    #   a *partial* schema can be declared to prevent specific fields from being loaded.
+    # @param strict [Boolean]
+    #   Throw an error if any `data` value does not exactly match the given or inferred
+    #   data type for that column. If set to `false`, values that do not match the data
+    #   type are cast to that data type or, if casting is not possible, set to null
+    #   instead.
+    # @param orient ["col", "row"]
+    #   Whether to interpret two-dimensional data as columns or as rows. If nil,
     #   the orientation is inferred by matching the columns and data dimensions. If
     #   this does not yield conclusive results, column orientation is used.
-    def initialize(data = nil, schema: nil, columns: nil, schema_overrides: nil, orient: nil, infer_schema_length: 100, nan_to_null: false)
+    # @param infer_schema_length [Integer]
+    #   The maximum number of rows to scan for schema inference. If set to `nil`, the
+    #   full data may be scanned *(this can be slow)*. This parameter only applies if
+    #   the input data is a sequence or generator of rows; other input is read as-is.
+    # @param nan_to_null [Boolean]
+    #   If the data comes from one or more Numo arrays, can optionally convert input
+    #   data NaN values to null instead. This is a no-op for all other input data.
+    def initialize(data = nil, schema: nil, columns: nil, schema_overrides: nil, strict: true, orient: nil, infer_schema_length: 100, nan_to_null: false)
+      if schema && columns
+        warn "columns is ignored when schema is passed"
+      end
       schema ||= columns
 
       if defined?(ActiveRecord) && (data.is_a?(ActiveRecord::Relation) || data.is_a?(ActiveRecord::Result))
@@ -29,11 +61,17 @@ module Polars
         self._df = self.class.hash_to_rbdf({}, schema: schema, schema_overrides: schema_overrides)
       elsif data.is_a?(Hash)
         data = data.transform_keys { |v| v.is_a?(Symbol) ? v.to_s : v }
-        self._df = self.class.hash_to_rbdf(data, schema: schema, schema_overrides: schema_overrides, nan_to_null: nan_to_null)
+        self._df = self.class.hash_to_rbdf(data, schema: schema, schema_overrides: schema_overrides, strict: strict, nan_to_null: nan_to_null)
       elsif data.is_a?(::Array)
-        self._df = self.class.sequence_to_rbdf(data, schema: schema, schema_overrides: schema_overrides, orient: orient, infer_schema_length: infer_schema_length)
+        self._df = self.class.sequence_to_rbdf(data, schema: schema, schema_overrides: schema_overrides, strict: strict, orient: orient, infer_schema_length: infer_schema_length)
       elsif data.is_a?(Series)
-        self._df = self.class.series_to_rbdf(data, schema: schema, schema_overrides: schema_overrides)
+        self._df = self.class.series_to_rbdf(data, schema: schema, schema_overrides: schema_overrides, strict: strict)
+      elsif data.respond_to?(:arrow_c_stream)
+        # This uses the fact that RbSeries.from_arrow_c_stream will create a
+        # struct-typed Series. Then we unpack that to a DataFrame.
+        tmp_col_name = ""
+        s = Utils.wrap_s(RbSeries.from_arrow_c_stream(data))
+        self._df = s.to_frame(tmp_col_name).unnest(tmp_col_name)._df
       else
         raise ArgumentError, "DataFrame constructor called with unsupported type; got #{data.class.name}"
       end
@@ -44,268 +82,6 @@ module Polars
       df = DataFrame.allocate
       df._df = rb_df
       df
-    end
-
-    # @private
-    def self._from_hashes(data, infer_schema_length: 100, schema: nil)
-      rbdf = RbDataFrame.read_hashes(data, infer_schema_length, schema)
-      _from_rbdf(rbdf)
-    end
-
-    # @private
-    def self._from_hash(data, schema: nil, schema_overrides: nil)
-      _from_rbdf(hash_to_rbdf(data, schema: schema, schema_overrides: schema_overrides))
-    end
-
-    # def self._from_records
-    # end
-
-    # def self._from_numo
-    # end
-
-    # no self._from_arrow
-
-    # no self._from_pandas
-
-    # @private
-    def self._read_csv(
-      file,
-      has_header: true,
-      columns: nil,
-      sep: str = ",",
-      comment_char: nil,
-      quote_char: '"',
-      skip_rows: 0,
-      dtypes: nil,
-      null_values: nil,
-      ignore_errors: false,
-      parse_dates: false,
-      n_threads: nil,
-      infer_schema_length: 100,
-      batch_size: 8192,
-      n_rows: nil,
-      encoding: "utf8",
-      low_memory: false,
-      rechunk: true,
-      skip_rows_after_header: 0,
-      row_count_name: nil,
-      row_count_offset: 0,
-      sample_size: 1024,
-      eol_char: "\n"
-    )
-      if Utils.pathlike?(file)
-        path = Utils.normalise_filepath(file)
-      else
-        path = nil
-        # if defined?(StringIO) && file.is_a?(StringIO)
-        #   file = file.string
-        # end
-      end
-
-      dtype_list = nil
-      dtype_slice = nil
-      if !dtypes.nil?
-        if dtypes.is_a?(Hash)
-          dtype_list = []
-          dtypes.each do|k, v|
-            dtype_list << [k, Utils.rb_type_to_dtype(v)]
-          end
-        elsif dtypes.is_a?(::Array)
-          dtype_slice = dtypes
-        else
-          raise ArgumentError, "dtype arg should be list or dict"
-        end
-      end
-
-      processed_null_values = Utils._process_null_values(null_values)
-
-      if columns.is_a?(String)
-        columns = [columns]
-      end
-      if file.is_a?(String) && file.include?("*")
-        dtypes_dict = nil
-        if !dtype_list.nil?
-          dtypes_dict = dtype_list.to_h
-        end
-        if !dtype_slice.nil?
-          raise ArgumentError, "cannot use glob patterns and unnamed dtypes as `dtypes` argument; Use dtypes: Mapping[str, Type[DataType]"
-        end
-        scan = Polars.scan_csv(
-          file,
-          has_header: has_header,
-          sep: sep,
-          comment_char: comment_char,
-          quote_char: quote_char,
-          skip_rows: skip_rows,
-          dtypes: dtypes_dict,
-          null_values: null_values,
-          ignore_errors: ignore_errors,
-          infer_schema_length: infer_schema_length,
-          n_rows: n_rows,
-          low_memory: low_memory,
-          rechunk: rechunk,
-          skip_rows_after_header: skip_rows_after_header,
-          row_count_name: row_count_name,
-          row_count_offset: row_count_offset,
-          eol_char: eol_char
-        )
-        if columns.nil?
-          return _from_rbdf(scan.collect._df)
-        elsif is_str_sequence(columns, allow_str: false)
-          return _from_rbdf(scan.select(columns).collect._df)
-        else
-          raise ArgumentError, "cannot use glob patterns and integer based projection as `columns` argument; Use columns: List[str]"
-        end
-      end
-
-      projection, columns = Utils.handle_projection_columns(columns)
-
-      _from_rbdf(
-        RbDataFrame.read_csv(
-          file,
-          infer_schema_length,
-          batch_size,
-          has_header,
-          ignore_errors,
-          n_rows,
-          skip_rows,
-          projection,
-          sep,
-          rechunk,
-          columns,
-          encoding,
-          n_threads,
-          path,
-          dtype_list,
-          dtype_slice,
-          low_memory,
-          comment_char,
-          quote_char,
-          processed_null_values,
-          parse_dates,
-          skip_rows_after_header,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset),
-          sample_size,
-          eol_char
-        )
-      )
-    end
-
-    # @private
-    def self._read_parquet(
-      source,
-      columns: nil,
-      n_rows: nil,
-      parallel: "auto",
-      row_count_name: nil,
-      row_count_offset: 0,
-      low_memory: false,
-      use_statistics: true,
-      rechunk: true
-    )
-      if Utils.pathlike?(source)
-        source = Utils.normalise_filepath(source)
-      end
-      if columns.is_a?(String)
-        columns = [columns]
-      end
-
-      if source.is_a?(String) && source.include?("*") && Utils.local_file?(source)
-        scan =
-          Polars.scan_parquet(
-            source,
-            n_rows: n_rows,
-            rechunk: true,
-            parallel: parallel,
-            row_count_name: row_count_name,
-            row_count_offset: row_count_offset,
-            low_memory: low_memory
-          )
-
-        if columns.nil?
-          return self._from_rbdf(scan.collect._df)
-        elsif Utils.is_str_sequence(columns, allow_str: false)
-          return self._from_rbdf(scan.select(columns).collect._df)
-        else
-          raise ArgumentError, "cannot use glob patterns and integer based projection as `columns` argument; Use columns: Array[String]"
-        end
-      end
-
-      projection, columns = Utils.handle_projection_columns(columns)
-      _from_rbdf(
-        RbDataFrame.read_parquet(
-          source,
-          columns,
-          projection,
-          n_rows,
-          parallel,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset),
-          low_memory,
-          use_statistics,
-          rechunk
-        )
-      )
-    end
-
-    # @private
-    def self._read_avro(file, columns: nil, n_rows: nil)
-      if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
-      end
-      projection, columns = Utils.handle_projection_columns(columns)
-      _from_rbdf(RbDataFrame.read_avro(file, columns, projection, n_rows))
-    end
-
-    # @private
-    def self._read_ipc(
-      file,
-      columns: nil,
-      n_rows: nil,
-      row_count_name: nil,
-      row_count_offset: 0,
-      rechunk: true,
-      memory_map: true
-    )
-      if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
-      end
-      if columns.is_a?(String)
-        columns = [columns]
-      end
-
-      if file.is_a?(String) && file.include?("*")
-        raise Todo
-      end
-
-      projection, columns = Utils.handle_projection_columns(columns)
-      _from_rbdf(
-        RbDataFrame.read_ipc(
-          file,
-          columns,
-          projection,
-          n_rows,
-          Utils._prepare_row_count_args(row_count_name, row_count_offset),
-          memory_map
-        )
-      )
-    end
-
-    # @private
-    def self._read_json(file)
-      if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
-      end
-
-      _from_rbdf(RbDataFrame.read_json(file))
-    end
-
-    # @private
-    def self._read_ndjson(file)
-      if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
-      end
-
-      _from_rbdf(RbDataFrame.read_ndjson(file))
     end
 
     # Get the shape of the DataFrame.
@@ -411,9 +187,16 @@ module Polars
     #     }
     #   )
     #   df.dtypes
-    #   # => [Polars::Int64, Polars::Float64, Polars::Utf8]
+    #   # => [Polars::Int64, Polars::Float64, Polars::String]
     def dtypes
       _df.dtypes
+    end
+
+    # Get flags that are set on the columns of this DataFrame.
+    #
+    # @return [Hash]
+    def flags
+      columns.to_h { |name| [name, self[name].flags] }
     end
 
     # Get the schema.
@@ -429,7 +212,7 @@ module Polars
     #     }
     #   )
     #   df.schema
-    #   # => {"foo"=>Polars::Int64, "bar"=>Polars::Float64, "ham"=>Polars::Utf8}
+    #   # => {"foo"=>Polars::Int64, "bar"=>Polars::Float64, "ham"=>Polars::String}
     def schema
       columns.zip(dtypes).to_h
     end
@@ -589,13 +372,13 @@ module Polars
             return df.slice(row_selection, 1)
           end
           # df[2, "a"]
-          if col_selection.is_a?(String) || col_selection.is_a?(Symbol)
+          if col_selection.is_a?(::String) || col_selection.is_a?(Symbol)
             return self[col_selection][row_selection]
           end
         end
 
         # column selection can be "a" and ["a", "b"]
-        if col_selection.is_a?(String) || col_selection.is_a?(Symbol)
+        if col_selection.is_a?(::String) || col_selection.is_a?(Symbol)
           col_selection = [col_selection]
         end
 
@@ -621,8 +404,8 @@ module Polars
 
         # select single column
         # df["foo"]
-        if item.is_a?(String) || item.is_a?(Symbol)
-          return Utils.wrap_s(_df.column(item.to_s))
+        if item.is_a?(::String) || item.is_a?(Symbol)
+          return Utils.wrap_s(_df.get_column(item.to_s))
         end
 
         # df[idx]
@@ -647,7 +430,7 @@ module Polars
 
         if item.is_a?(Series)
           dtype = item.dtype
-          if dtype == Utf8
+          if dtype == String
             return _from_rbdf(_df.select(item))
           elsif dtype == UInt32
             return _from_rbdf(_df.take_with_series(item._s))
@@ -698,13 +481,18 @@ module Polars
         s[row_selection] = value
 
         if col_selection.is_a?(Integer)
-          replace_at_idx(col_selection, s)
+          replace_column(col_selection, s)
         elsif Utils.strlike?(col_selection)
           replace(col_selection, s)
         end
       else
         raise Todo
       end
+    end
+
+    # @private
+    def arrow_c_stream
+      _df.arrow_c_stream
     end
 
     # Return the dataframe as a scalar.
@@ -814,26 +602,40 @@ module Polars
 
     # Serialize to JSON representation.
     #
-    # @return [nil]
-    #
     # @param file [String]
     #   File path to which the result should be written.
-    # @param pretty [Boolean]
-    #   Pretty serialize json.
-    # @param row_oriented [Boolean]
-    #   Write to row oriented json. This is slower, but more common.
     #
-    # @see #write_ndjson
-    def write_json(
-      file,
-      pretty: false,
-      row_oriented: false
-    )
+    # @return [nil]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6, 7, 8]
+    #     }
+    #   )
+    #   df.write_json
+    #   # => "[{\"foo\":1,\"bar\":6},{\"foo\":2,\"bar\":7},{\"foo\":3,\"bar\":8}]"
+    def write_json(file = nil)
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
       end
+      to_string_io = !file.nil? && file.is_a?(StringIO)
+      if file.nil? || to_string_io
+        buf = StringIO.new
+        buf.set_encoding(Encoding::BINARY)
+        _df.write_json(buf)
+        json_bytes = buf.string
 
-      _df.write_json(file, pretty, row_oriented)
+        json_str = json_bytes.force_encoding(Encoding::UTF_8)
+        if to_string_io
+          file.write(json_str)
+        else
+          return json_str
+        end
+      else
+        _df.write_json(file)
+      end
       nil
     end
 
@@ -843,12 +645,36 @@ module Polars
     #   File path to which the result should be written.
     #
     # @return [nil]
-    def write_ndjson(file)
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6, 7, 8]
+    #     }
+    #   )
+    #   df.write_ndjson
+    #   # => "{\"foo\":1,\"bar\":6}\n{\"foo\":2,\"bar\":7}\n{\"foo\":3,\"bar\":8}\n"
+    def write_ndjson(file = nil)
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
       end
+      to_string_io = !file.nil? && file.is_a?(StringIO)
+      if file.nil? || to_string_io
+        buf = StringIO.new
+        buf.set_encoding(Encoding::BINARY)
+        _df.write_ndjson(buf)
+        json_bytes = buf.string
 
-      _df.write_ndjson(file)
+        json_str = json_bytes.force_encoding(Encoding::UTF_8)
+        if to_string_io
+          file.write(json_str)
+        else
+          return json_str
+        end
+      else
+        _df.write_ndjson(file)
+      end
       nil
     end
 
@@ -899,6 +725,7 @@ module Polars
     def write_csv(
       file = nil,
       has_header: true,
+      include_header: nil,
       sep: ",",
       quote: '"',
       batch_size: 1024,
@@ -908,6 +735,8 @@ module Polars
       float_precision: nil,
       null_value: nil
     )
+      include_header = has_header if include_header.nil?
+
       if sep.length > 1
         raise ArgumentError, "only single byte separator is allowed"
       elsif quote.length > 1
@@ -921,7 +750,7 @@ module Polars
         buffer.set_encoding(Encoding::BINARY)
         _df.write_csv(
           buffer,
-          has_header,
+          include_header,
           sep.ord,
           quote.ord,
           batch_size,
@@ -935,12 +764,12 @@ module Polars
       end
 
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
       end
 
       _df.write_csv(
         file,
-        has_header,
+        include_header,
         sep.ord,
         quote.ord,
         batch_size,
@@ -968,15 +797,18 @@ module Polars
     #   Compression method. Defaults to "uncompressed".
     #
     # @return [nil]
-    def write_avro(file, compression = "uncompressed")
+    def write_avro(file, compression = "uncompressed", name: "")
       if compression.nil?
         compression = "uncompressed"
       end
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
+      end
+      if name.nil?
+        name = ""
       end
 
-      _df.write_avro(file, compression)
+      _df.write_avro(file, compression, name)
     end
 
     # Write to Arrow IPC binary stream or Feather file.
@@ -987,27 +819,89 @@ module Polars
     #   Compression method. Defaults to "uncompressed".
     #
     # @return [nil]
-    def write_ipc(file, compression: "uncompressed")
+    def write_ipc(
+      file,
+      compression: "uncompressed",
+      compat_level: nil,
+      storage_options: nil,
+      retries: 2
+    )
       return_bytes = file.nil?
       if return_bytes
         file = StringIO.new
         file.set_encoding(Encoding::BINARY)
       end
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
+      end
+
+      if compat_level.nil?
+        compat_level = true
       end
 
       if compression.nil?
         compression = "uncompressed"
       end
 
-      _df.write_ipc(file, compression)
+      if storage_options&.any?
+        storage_options = storage_options.to_a
+      else
+        storage_options = nil
+      end
+
+      _df.write_ipc(file, compression, compat_level, storage_options, retries)
+      return_bytes ? file.string : nil
+    end
+
+    # Write to Arrow IPC record batch stream.
+    #
+    # See "Streaming format" in https://arrow.apache.org/docs/python/ipc.html.
+    #
+    # @param file [Object]
+    #   Path or writable file-like object to which the IPC record batch data will
+    #   be written. If set to `None`, the output is returned as a BytesIO object.
+    # @param compression ['uncompressed', 'lz4', 'zstd']
+    #   Compression method. Defaults to "uncompressed".
+    #
+    # @return [Object]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3, 4, 5],
+    #       "bar" => [6, 7, 8, 9, 10],
+    #       "ham" => ["a", "b", "c", "d", "e"]
+    #     }
+    #   )
+    #   df.write_ipc_stream("new_file.arrow")
+    def write_ipc_stream(
+      file,
+      compression: "uncompressed",
+      compat_level: nil
+    )
+      return_bytes = file.nil?
+      if return_bytes
+        file = StringIO.new
+        file.set_encoding(Encoding::BINARY)
+      elsif Utils.pathlike?(file)
+        file = Utils.normalize_filepath(file)
+      end
+
+      if compat_level.nil?
+        compat_level = true
+      end
+
+      if compression.nil?
+        compression = "uncompressed"
+      end
+
+      _df.write_ipc_stream(file, compression, compat_level)
       return_bytes ? file.string : nil
     end
 
     # Write to Apache Parquet file.
     #
-    # @param file [String]
+    # @param file [String, Pathname, StringIO]
     #   File path to which the file should be written.
     # @param compression ["lz4", "uncompressed", "snappy", "gzip", "lzo", "brotli", "zstd"]
     #   Choose "zstd" for good compression performance.
@@ -1024,10 +918,9 @@ module Polars
     # @param statistics [Boolean]
     #   Write statistics to the parquet headers. This requires extra compute.
     # @param row_group_size [Integer, nil]
-    #   Size of the row groups in number of rows.
-    #   If `nil` (default), the chunks of the DataFrame are
-    #   used. Writing in smaller chunks may reduce memory pressure and improve
-    #   writing speeds.
+    #   Size of the row groups in number of rows. Defaults to 512^2 rows.
+    # @param data_page_size [Integer, nil]
+    #   Size of the data page in bytes. Defaults to 1024^2 bytes.
     #
     # @return [nil]
     def write_parquet(
@@ -1035,18 +928,92 @@ module Polars
       compression: "zstd",
       compression_level: nil,
       statistics: false,
-      row_group_size: nil
+      row_group_size: nil,
+      data_page_size: nil
     )
       if compression.nil?
         compression = "uncompressed"
       end
       if Utils.pathlike?(file)
-        file = Utils.normalise_filepath(file)
+        file = Utils.normalize_filepath(file)
+      end
+
+      if statistics == true
+        statistics = {
+          min: true,
+          max: true,
+          distinct_count: false,
+          null_count: true
+        }
+      elsif statistics == false
+        statistics = {}
+      elsif statistics == "full"
+        statistics = {
+          min: true,
+          max: true,
+          distinct_count: true,
+          null_count: true
+        }
       end
 
       _df.write_parquet(
-        file, compression, compression_level, statistics, row_group_size
+        file, compression, compression_level, statistics, row_group_size, data_page_size
       )
+    end
+
+    # Write DataFrame as delta table.
+    #
+    # @param target [Object]
+    #   URI of a table or a DeltaTable object.
+    # @param mode ["error", "append", "overwrite", "ignore", "merge"]
+    #   How to handle existing data.
+    # @param storage_options [Hash]
+    #   Extra options for the storage backends supported by `deltalake-rb`.
+    # @param delta_write_options [Hash]
+    #   Additional keyword arguments while writing a Delta lake Table.
+    # @param delta_merge_options [Hash]
+    #   Keyword arguments which are required to `MERGE` a Delta lake Table.
+    #
+    # @return [nil]
+    def write_delta(
+      target,
+      mode: "error",
+      storage_options: nil,
+      delta_write_options: nil,
+      delta_merge_options: nil
+    )
+      Polars.send(:_check_if_delta_available)
+
+      if Utils.pathlike?(target)
+        target = Polars.send(:_resolve_delta_lake_uri, target.to_s, strict: false)
+      end
+
+      data = self
+
+      if mode == "merge"
+        if delta_merge_options.nil?
+          msg = "You need to pass delta_merge_options with at least a given predicate for `MERGE` to work."
+          raise ArgumentError, msg
+        end
+        if target.is_a?(::String)
+          dt = DeltaLake::Table.new(target, storage_options: storage_options)
+        else
+          dt = target
+        end
+
+        predicate = delta_merge_options.delete(:predicate)
+        dt.merge(data, predicate, **delta_merge_options)
+      else
+        delta_write_options ||= {}
+
+        DeltaLake.write(
+          target,
+          data,
+          mode: mode,
+          storage_options: storage_options,
+          **delta_write_options
+        )
+      end
     end
 
     # Return an estimation of the total (heap) allocated size of the DataFrame.
@@ -1081,7 +1048,7 @@ module Polars
     #   df.estimated_size
     #   # => 25888898
     #   df.estimated_size("mb")
-    #   # => 24.689577102661133
+    #   # => 17.0601749420166
     def estimated_size(unit = "b")
       sz = _df.estimated_size
       Utils.scale_bytes(sz, to: unit)
@@ -1180,6 +1147,10 @@ module Polars
     #
     # @param mapping [Hash]
     #   Key value pairs that map from old name to new name.
+    # @param strict [Boolean]
+    #   Validate that all column names exist in the current schema,
+    #   and throw an exception if any do not. (Note that this parameter
+    #   is a no-op when passing a function to `mapping`).
     #
     # @return [DataFrame]
     #
@@ -1203,8 +1174,8 @@ module Polars
     #   # │ 2     ┆ 7   ┆ b   │
     #   # │ 3     ┆ 8   ┆ c   │
     #   # └───────┴─────┴─────┘
-    def rename(mapping)
-      lazy.rename(mapping).collect(no_optimization: true)
+    def rename(mapping, strict: true)
+      lazy.rename(mapping, strict: strict).collect(no_optimization: true)
     end
 
     # Insert a Series at a certain column index. This operation is in place.
@@ -1219,7 +1190,7 @@ module Polars
     # @example
     #   df = Polars::DataFrame.new({"foo" => [1, 2, 3], "bar" => [4, 5, 6]})
     #   s = Polars::Series.new("baz", [97, 98, 99])
-    #   df.insert_at_idx(1, s)
+    #   df.insert_column(1, s)
     #   # =>
     #   # shape: (3, 3)
     #   # ┌─────┬─────┬─────┐
@@ -1241,7 +1212,7 @@ module Polars
     #     }
     #   )
     #   s = Polars::Series.new("d", [-2.5, 15, 20.5, 0])
-    #   df.insert_at_idx(3, s)
+    #   df.insert_column(3, s)
     #   # =>
     #   # shape: (4, 4)
     #   # ┌─────┬──────┬───────┬──────┐
@@ -1254,13 +1225,14 @@ module Polars
     #   # │ 3   ┆ 10.0 ┆ false ┆ 20.5 │
     #   # │ 4   ┆ 13.0 ┆ true  ┆ 0.0  │
     #   # └─────┴──────┴───────┴──────┘
-    def insert_at_idx(index, series)
+    def insert_column(index, series)
       if index < 0
         index = columns.length + index
       end
-      _df.insert_at_idx(index, series._s)
+      _df.insert_column(index, series._s)
       self
     end
+    alias_method :insert_at_idx, :insert_column
 
     # Filter the rows in the DataFrame based on a predicate expression.
     #
@@ -1364,7 +1336,7 @@ module Polars
           ]
         )._df
       )
-      summary.insert_at_idx(
+      summary.insert_column(
         0,
         Polars::Series.new(
           "describe",
@@ -1385,11 +1357,12 @@ module Polars
     #   df = Polars::DataFrame.new(
     #     {"foo" => [1, 2, 3], "bar" => [6, 7, 8], "ham" => ["a", "b", "c"]}
     #   )
-    #   df.find_idx_by_name("ham")
+    #   df.get_column_index("ham")
     #   # => 2
-    def find_idx_by_name(name)
-      _df.find_idx_by_name(name)
+    def get_column_index(name)
+      _df.get_column_index(name)
     end
+    alias_method :find_idx_by_name, :get_column_index
 
     # Replace a column at an index location.
     #
@@ -1409,7 +1382,7 @@ module Polars
     #     }
     #   )
     #   s = Polars::Series.new("apple", [10, 20, 30])
-    #   df.replace_at_idx(0, s)
+    #   df.replace_column(0, s)
     #   # =>
     #   # shape: (3, 3)
     #   # ┌───────┬─────┬─────┐
@@ -1421,13 +1394,14 @@ module Polars
     #   # │ 20    ┆ 7   ┆ b   │
     #   # │ 30    ┆ 8   ┆ c   │
     #   # └───────┴─────┴─────┘
-    def replace_at_idx(index, series)
+    def replace_column(index, series)
       if index < 0
         index = columns.length + index
       end
-      _df.replace_at_idx(index, series._s)
+      _df.replace_column(index, series._s)
       self
     end
+    alias_method :replace_at_idx, :replace_column
 
     # Sort the DataFrame by column.
     #
@@ -1521,13 +1495,14 @@ module Polars
     #       "ham" => ["c", "b", "a"]
     #     }
     #   )
-    #   df1.frame_equal(df1)
+    #   df1.equals(df1)
     #   # => true
-    #   df1.frame_equal(df2)
+    #   df1.equals(df2)
     #   # => false
-    def frame_equal(other, null_equal: true)
-      _df.frame_equal(other._df, null_equal)
+    def equals(other, null_equal: true)
+      _df.equals(other._df, null_equal)
     end
+    alias_method :frame_equal, :equals
 
     # Replace a column by a new Series.
     #
@@ -1713,10 +1688,7 @@ module Polars
     #   # │ 3   ┆ 8   ┆ c   │
     #   # └─────┴─────┴─────┘
     def drop_nulls(subset: nil)
-      if subset.is_a?(String)
-        subset = [subset]
-      end
-      _from_rbdf(_df.drop_nulls(subset))
+      lazy.drop_nulls(subset: subset).collect(_eager: true)
     end
 
     # Offers a structured way to apply a sequence of user-defined functions (UDFs).
@@ -1775,21 +1747,22 @@ module Polars
     #       "b" => [2, 4, 6]
     #     }
     #   )
-    #   df.with_row_count
+    #   df.with_row_index
     #   # =>
     #   # shape: (3, 3)
-    #   # ┌────────┬─────┬─────┐
-    #   # │ row_nr ┆ a   ┆ b   │
-    #   # │ ---    ┆ --- ┆ --- │
-    #   # │ u32    ┆ i64 ┆ i64 │
-    #   # ╞════════╪═════╪═════╡
-    #   # │ 0      ┆ 1   ┆ 2   │
-    #   # │ 1      ┆ 3   ┆ 4   │
-    #   # │ 2      ┆ 5   ┆ 6   │
-    #   # └────────┴─────┴─────┘
-    def with_row_count(name: "row_nr", offset: 0)
-      _from_rbdf(_df.with_row_count(name, offset))
+    #   # ┌───────┬─────┬─────┐
+    #   # │ index ┆ a   ┆ b   │
+    #   # │ ---   ┆ --- ┆ --- │
+    #   # │ u32   ┆ i64 ┆ i64 │
+    #   # ╞═══════╪═════╪═════╡
+    #   # │ 0     ┆ 1   ┆ 2   │
+    #   # │ 1     ┆ 3   ┆ 4   │
+    #   # │ 2     ┆ 5   ┆ 6   │
+    #   # └───────┴─────┴─────┘
+    def with_row_index(name: "index", offset: 0)
+      _from_rbdf(_df.with_row_index(name, offset))
     end
+    alias_method :with_row_count, :with_row_index
 
     # Start a group by operation.
     #
@@ -1883,12 +1856,6 @@ module Polars
     #   Define whether the temporal window interval is closed or not.
     # @param by [Object]
     #   Also group by this column/these columns.
-    # @param check_sorted [Boolean]
-    #   When the `by` argument is given, polars can not check sortedness
-    #   by the metadata and has to do a full scan on the index column to
-    #   verify data is sorted. This is expensive. If you are sure the
-    #   data within the by groups is sorted, you can set this to `false`.
-    #   Doing so incorrectly will lead to incorrect output
     #
     # @return [RollingGroupBy]
     #
@@ -1904,7 +1871,7 @@ module Polars
     #   df = Polars::DataFrame.new({"dt" => dates, "a" => [3, 7, 5, 9, 2, 1]}).with_column(
     #     Polars.col("dt").str.strptime(Polars::Datetime).set_sorted
     #   )
-    #   df.group_by_rolling(index_column: "dt", period: "2d").agg(
+    #   df.rolling(index_column: "dt", period: "2d").agg(
     #     [
     #       Polars.sum("a").alias("sum_a"),
     #       Polars.min("a").alias("min_a"),
@@ -1925,17 +1892,17 @@ module Polars
     #   # │ 2020-01-03 19:45:32 ┆ 11    ┆ 2     ┆ 9     │
     #   # │ 2020-01-08 23:16:43 ┆ 1     ┆ 1     ┆ 1     │
     #   # └─────────────────────┴───────┴───────┴───────┘
-    def group_by_rolling(
+    def rolling(
       index_column:,
       period:,
       offset: nil,
       closed: "right",
-      by: nil,
-      check_sorted: true
+      by: nil
     )
-      RollingGroupBy.new(self, index_column, period, offset, closed, by, check_sorted)
+      RollingGroupBy.new(self, index_column, period, offset, closed, by)
     end
-    alias_method :groupby_rolling, :group_by_rolling
+    alias_method :groupby_rolling, :rolling
+    alias_method :group_by_rolling, :rolling
 
     # Group based on a time value (or index value of type `:i32`, `:i64`).
     #
@@ -2005,10 +1972,12 @@ module Polars
     # @example
     #   df = Polars::DataFrame.new(
     #     {
-    #       "time" => Polars.date_range(
+    #       "time" => Polars.datetime_range(
     #         DateTime.new(2021, 12, 16),
     #         DateTime.new(2021, 12, 16, 3),
-    #         "30m"
+    #         "30m",
+    #         time_unit: "us",
+    #         eager: true
     #       ),
     #       "n" => 0..6
     #     }
@@ -2075,16 +2044,16 @@ module Polars
     #   )
     #   # =>
     #   # shape: (4, 3)
-    #   # ┌─────────────────────┬────────────┬───────────────────────────────────┐
-    #   # │ time                ┆ time_count ┆ time_agg_list                     │
-    #   # │ ---                 ┆ ---        ┆ ---                               │
-    #   # │ datetime[μs]        ┆ u32        ┆ list[datetime[μs]]                │
-    #   # ╞═════════════════════╪════════════╪═══════════════════════════════════╡
-    #   # │ 2021-12-16 00:00:00 ┆ 2          ┆ [2021-12-16 00:00:00, 2021-12-16… │
-    #   # │ 2021-12-16 01:00:00 ┆ 2          ┆ [2021-12-16 01:00:00, 2021-12-16… │
-    #   # │ 2021-12-16 02:00:00 ┆ 2          ┆ [2021-12-16 02:00:00, 2021-12-16… │
-    #   # │ 2021-12-16 03:00:00 ┆ 1          ┆ [2021-12-16 03:00:00]             │
-    #   # └─────────────────────┴────────────┴───────────────────────────────────┘
+    #   # ┌─────────────────────┬────────────┬─────────────────────────────────┐
+    #   # │ time                ┆ time_count ┆ time_agg_list                   │
+    #   # │ ---                 ┆ ---        ┆ ---                             │
+    #   # │ datetime[μs]        ┆ u32        ┆ list[datetime[μs]]              │
+    #   # ╞═════════════════════╪════════════╪═════════════════════════════════╡
+    #   # │ 2021-12-16 00:00:00 ┆ 2          ┆ [2021-12-16 00:00:00, 2021-12-… │
+    #   # │ 2021-12-16 01:00:00 ┆ 2          ┆ [2021-12-16 01:00:00, 2021-12-… │
+    #   # │ 2021-12-16 02:00:00 ┆ 2          ┆ [2021-12-16 02:00:00, 2021-12-… │
+    #   # │ 2021-12-16 03:00:00 ┆ 1          ┆ [2021-12-16 03:00:00]           │
+    #   # └─────────────────────┴────────────┴─────────────────────────────────┘
     #
     # @example When closed="both" the time values at the window boundaries belong to 2 groups.
     #   df.group_by_dynamic("time", every: "1h", closed: "both").agg(
@@ -2107,10 +2076,12 @@ module Polars
     # @example Dynamic group bys can also be combined with grouping on normal keys.
     #   df = Polars::DataFrame.new(
     #     {
-    #       "time" => Polars.date_range(
+    #       "time" => Polars.datetime_range(
     #         DateTime.new(2021, 12, 16),
     #         DateTime.new(2021, 12, 16, 3),
-    #         "30m"
+    #         "30m",
+    #         time_unit: "us",
+    #         eager: true
     #       ),
     #       "groups" => ["a", "a", "a", "b", "b", "a", "a"]
     #     }
@@ -2153,12 +2124,13 @@ module Polars
     #     closed: "right"
     #   ).agg(Polars.col("A").alias("A_agg_list"))
     #   # =>
-    #   # shape: (3, 4)
+    #   # shape: (4, 4)
     #   # ┌─────────────────┬─────────────────┬─────┬─────────────────┐
     #   # │ _lower_boundary ┆ _upper_boundary ┆ idx ┆ A_agg_list      │
     #   # │ ---             ┆ ---             ┆ --- ┆ ---             │
     #   # │ i64             ┆ i64             ┆ i64 ┆ list[str]       │
     #   # ╞═════════════════╪═════════════════╪═════╪═════════════════╡
+    #   # │ -2              ┆ 1               ┆ -2  ┆ ["A", "A"]      │
     #   # │ 0               ┆ 3               ┆ 0   ┆ ["A", "B", "B"] │
     #   # │ 2               ┆ 5               ┆ 2   ┆ ["B", "B", "C"] │
     #   # │ 4               ┆ 7               ┆ 4   ┆ ["C"]           │
@@ -2196,8 +2168,6 @@ module Polars
     #   Note that this column has to be sorted for the output to make sense.
     # @param every [String]
     #   interval will start 'every' duration
-    # @param offset [String]
-    #   change the start of the date_range by this offset.
     # @param by [Object]
     #   First group by these columns and then upsample for every group
     # @param maintain_order [Boolean]
@@ -2257,25 +2227,20 @@ module Polars
     def upsample(
       time_column:,
       every:,
-      offset: nil,
       by: nil,
       maintain_order: false
     )
       if by.nil?
         by = []
       end
-      if by.is_a?(String)
+      if by.is_a?(::String)
         by = [by]
       end
-      if offset.nil?
-        offset = "0ns"
-      end
 
-      every = Utils._timedelta_to_pl_duration(every)
-      offset = Utils._timedelta_to_pl_duration(offset)
+      every = Utils.parse_as_duration_string(every)
 
       _from_rbdf(
-        _df.upsample(by, time_column, every, offset, maintain_order)
+        _df.upsample(by, time_column, every, maintain_order)
       )
     end
 
@@ -2317,6 +2282,14 @@ module Polars
     #   keys are within this distance. If an asof join is done on columns of dtype
     #   "Date", "Datetime", "Duration" or "Time" you use the following string
     #   language:
+    # @param allow_exact_matches [Boolean]
+    #   Whether exact matches are valid join predicates.
+    #     - If true, allow matching with the same `on` value (i.e. less-than-or-equal-to / greater-than-or-equal-to).
+    #     - If false, don't match the same `on` value (i.e., strictly less-than / strictly greater-than).
+    # @param check_sortedness [Boolean]
+    #   Check the sortedness of the asof keys. If the keys are not sorted Polars
+    #   will error, or in case of 'by' argument raise a warning. This might become
+    #   a hard error in the future.
     #
     #    - 1ns   (1 nanosecond)
     #    - 1us   (1 microsecond)
@@ -2339,6 +2312,11 @@ module Polars
     # @param force_parallel [Boolean]
     #   Force the physical plan to evaluate the computation of both DataFrames up to
     #   the join in parallel.
+    # @param coalesce [Boolean]
+    #   Coalescing behavior (merging of join columns).
+    #     - true: -> Always coalesce join columns.
+    #     - false: -> Never coalesce join columns.
+    #   Note that joining on any other expressions than `col` will turn off coalescing.
     #
     # @return [DataFrame]
     #
@@ -2392,7 +2370,10 @@ module Polars
       suffix: "_right",
       tolerance: nil,
       allow_parallel: true,
-      force_parallel: false
+      force_parallel: false,
+      coalesce: true,
+      allow_exact_matches: true,
+      check_sortedness: true
     )
       lazy
         .join_asof(
@@ -2407,7 +2388,10 @@ module Polars
           suffix: suffix,
           tolerance: tolerance,
           allow_parallel: allow_parallel,
-          force_parallel: force_parallel
+          force_parallel: force_parallel,
+          coalesce: coalesce,
+          allow_exact_matches: allow_exact_matches,
+          check_sortedness: check_sortedness
         )
         .collect(no_optimization: true)
     end
@@ -2422,10 +2406,24 @@ module Polars
     #   Name(s) of the right join column(s).
     # @param on [Object]
     #   Name(s) of the join columns in both DataFrames.
-    # @param how ["inner", "left", "outer", "semi", "anti", "cross"]
+    # @param how ["inner", "left", "full", "semi", "anti", "cross"]
     #   Join strategy.
     # @param suffix [String]
     #   Suffix to append to columns with a duplicate name.
+    # @param validate ['m:m', 'm:1', '1:m', '1:1']
+    #   Checks if join is of specified type.
+    #     * *many_to_many* - “m:m”: default, does not result in checks
+    #     * *one_to_one* - “1:1”: check if join keys are unique in both left and right datasets
+    #     * *one_to_many* - “1:m”: check if join keys are unique in left dataset
+    #     * *many_to_one* - “m:1”: check if join keys are unique in right dataset
+    # @param join_nulls [Boolean]
+    #   Join on null values. By default null values will never produce matches.
+    # @param coalesce [Boolean]
+    #   Coalescing behavior (merging of join columns).
+    #     - nil: -> join specific.
+    #     - true: -> Always coalesce join columns.
+    #     - false: -> Never coalesce join columns.
+    #   Note that joining on any other expressions than `col` will turn off coalescing.
     #
     # @return [DataFrame]
     #
@@ -2456,19 +2454,19 @@ module Polars
     #   # └─────┴─────┴─────┴───────┘
     #
     # @example
-    #   df.join(other_df, on: "ham", how: "outer")
+    #   df.join(other_df, on: "ham", how: "full")
     #   # =>
-    #   # shape: (4, 4)
-    #   # ┌──────┬──────┬─────┬───────┐
-    #   # │ foo  ┆ bar  ┆ ham ┆ apple │
-    #   # │ ---  ┆ ---  ┆ --- ┆ ---   │
-    #   # │ i64  ┆ f64  ┆ str ┆ str   │
-    #   # ╞══════╪══════╪═════╪═══════╡
-    #   # │ 1    ┆ 6.0  ┆ a   ┆ x     │
-    #   # │ 2    ┆ 7.0  ┆ b   ┆ y     │
-    #   # │ null ┆ null ┆ d   ┆ z     │
-    #   # │ 3    ┆ 8.0  ┆ c   ┆ null  │
-    #   # └──────┴──────┴─────┴───────┘
+    #   # shape: (4, 5)
+    #   # ┌──────┬──────┬──────┬───────┬───────────┐
+    #   # │ foo  ┆ bar  ┆ ham  ┆ apple ┆ ham_right │
+    #   # │ ---  ┆ ---  ┆ ---  ┆ ---   ┆ ---       │
+    #   # │ i64  ┆ f64  ┆ str  ┆ str   ┆ str       │
+    #   # ╞══════╪══════╪══════╪═══════╪═══════════╡
+    #   # │ 1    ┆ 6.0  ┆ a    ┆ x     ┆ a         │
+    #   # │ 2    ┆ 7.0  ┆ b    ┆ y     ┆ b         │
+    #   # │ null ┆ null ┆ null ┆ z     ┆ d         │
+    #   # │ 3    ┆ 8.0  ┆ c    ┆ null  ┆ null      │
+    #   # └──────┴──────┴──────┴───────┴───────────┘
     #
     # @example
     #   df.join(other_df, on: "ham", how: "left")
@@ -2508,7 +2506,16 @@ module Polars
     #   # ╞═════╪═════╪═════╡
     #   # │ 3   ┆ 8.0 ┆ c   │
     #   # └─────┴─────┴─────┘
-    def join(other, left_on: nil, right_on: nil, on: nil, how: "inner", suffix: "_right")
+    def join(other,
+      left_on: nil,
+      right_on: nil,
+      on: nil,
+      how: "inner",
+      suffix: "_right",
+      validate: "m:m",
+      join_nulls: false,
+      coalesce: nil
+    )
       lazy
         .join(
           other.lazy,
@@ -2517,6 +2524,9 @@ module Polars
           on: on,
           how: how,
           suffix: suffix,
+          validate: validate,
+          join_nulls: join_nulls,
+          coalesce: coalesce
         )
         .collect(no_optimization: true)
     end
@@ -2555,7 +2565,7 @@ module Polars
     #   df = Polars::DataFrame.new({"foo" => [1, 2, 3], "bar" => [-1, 5, 8]})
     #
     # @example Return a DataFrame by mapping each row to a tuple:
-    #   df.apply { |t| [t[0] * 2, t[1] * 3] }
+    #   df.map_rows { |t| [t[0] * 2, t[1] * 3] }
     #   # =>
     #   # shape: (3, 2)
     #   # ┌──────────┬──────────┐
@@ -2569,26 +2579,27 @@ module Polars
     #   # └──────────┴──────────┘
     #
     # @example Return a Series by mapping each row to a scalar:
-    #   df.apply { |t| t[0] * 2 + t[1] }
+    #   df.map_rows { |t| t[0] * 2 + t[1] }
     #   # =>
     #   # shape: (3, 1)
-    #   # ┌───────┐
-    #   # │ apply │
-    #   # │ ---   │
-    #   # │ i64   │
-    #   # ╞═══════╡
-    #   # │ 1     │
-    #   # │ 9     │
-    #   # │ 14    │
-    #   # └───────┘
-    def apply(return_dtype: nil, inference_size: 256, &f)
-      out, is_df = _df.apply(f, return_dtype, inference_size)
+    #   # ┌─────┐
+    #   # │ map │
+    #   # │ --- │
+    #   # │ i64 │
+    #   # ╞═════╡
+    #   # │ 1   │
+    #   # │ 9   │
+    #   # │ 14  │
+    #   # └─────┘
+    def map_rows(return_dtype: nil, inference_size: 256, &f)
+      out, is_df = _df.map_rows(f, return_dtype, inference_size)
       if is_df
         _from_rbdf(out)
       else
         _from_rbdf(Utils.wrap_s(out).to_frame._df)
       end
     end
+    alias_method :apply, :map_rows
 
     # Return a new DataFrame with the column added or replaced.
     #
@@ -2610,26 +2621,26 @@ module Polars
     #   # ┌─────┬─────┬───────────┐
     #   # │ a   ┆ b   ┆ b_squared │
     #   # │ --- ┆ --- ┆ ---       │
-    #   # │ i64 ┆ i64 ┆ f64       │
+    #   # │ i64 ┆ i64 ┆ i64       │
     #   # ╞═════╪═════╪═══════════╡
-    #   # │ 1   ┆ 2   ┆ 4.0       │
-    #   # │ 3   ┆ 4   ┆ 16.0      │
-    #   # │ 5   ┆ 6   ┆ 36.0      │
+    #   # │ 1   ┆ 2   ┆ 4         │
+    #   # │ 3   ┆ 4   ┆ 16        │
+    #   # │ 5   ┆ 6   ┆ 36        │
     #   # └─────┴─────┴───────────┘
     #
     # @example Replaced
     #   df.with_column(Polars.col("a") ** 2)
     #   # =>
     #   # shape: (3, 2)
-    #   # ┌──────┬─────┐
-    #   # │ a    ┆ b   │
-    #   # │ ---  ┆ --- │
-    #   # │ f64  ┆ i64 │
-    #   # ╞══════╪═════╡
-    #   # │ 1.0  ┆ 2   │
-    #   # │ 9.0  ┆ 4   │
-    #   # │ 25.0 ┆ 6   │
-    #   # └──────┴─────┘
+    #   # ┌─────┬─────┐
+    #   # │ a   ┆ b   │
+    #   # │ --- ┆ --- │
+    #   # │ i64 ┆ i64 │
+    #   # ╞═════╪═════╡
+    #   # │ 1   ┆ 2   │
+    #   # │ 9   ┆ 4   │
+    #   # │ 25  ┆ 6   │
+    #   # └─────┴─────┘
     def with_column(column)
       lazy
         .with_column(column)
@@ -2796,16 +2807,36 @@ module Polars
     #   # │ 2   ┆ 7.0 │
     #   # │ 3   ┆ 8.0 │
     #   # └─────┴─────┘
-    def drop(columns)
-      if columns.is_a?(::Array)
-        df = clone
-        columns.each do |n|
-          df._df.drop_in_place(n)
-        end
-        df
-      else
-        _from_rbdf(_df.drop(columns))
-      end
+    #
+    # @example Drop multiple columns by passing a list of column names.
+    #   df.drop(["bar", "ham"])
+    #   # =>
+    #   # shape: (3, 1)
+    #   # ┌─────┐
+    #   # │ foo │
+    #   # │ --- │
+    #   # │ i64 │
+    #   # ╞═════╡
+    #   # │ 1   │
+    #   # │ 2   │
+    #   # │ 3   │
+    #   # └─────┘
+    #
+    # @example Use positional arguments to drop multiple columns.
+    #   df.drop("foo", "ham")
+    #   # =>
+    #   # shape: (3, 1)
+    #   # ┌─────┐
+    #   # │ bar │
+    #   # │ --- │
+    #   # │ f64 │
+    #   # ╞═════╡
+    #   # │ 6.0 │
+    #   # │ 7.0 │
+    #   # │ 8.0 │
+    #   # └─────┘
+    def drop(*columns)
+      lazy.drop(*columns).collect(_eager: true)
     end
 
     # Drop in place.
@@ -2842,8 +2873,83 @@ module Polars
     #   Column to drop.
     #
     # @return [Series]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6, 7, 8],
+    #       "ham" => ["a", "b", "c"]
+    #     }
+    #   )
+    #   df.delete("ham")
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'ham' [str]
+    #   # [
+    #   #         "a"
+    #   #         "b"
+    #   #         "c"
+    #   # ]
+    #
+    # @example
+    #   df.delete("missing")
+    #   # => nil
     def delete(name)
       drop_in_place(name) if include?(name)
+    end
+
+    # Cast DataFrame column(s) to the specified dtype(s).
+    #
+    # @param dtypes [Object]
+    #   Mapping of column names (or selector) to dtypes, or a single dtype
+    #   to which all columns will be cast.
+    # @param strict [Boolean]
+    #   Throw an error if a cast could not be done (for instance, due to an
+    #   overflow).
+    #
+    # @return [DataFrame]
+    #
+    # @example Cast specific frame columns to the specified dtypes:
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [6.0, 7.0, 8.0],
+    #       "ham" => [Date.new(2020, 1, 2), Date.new(2021, 3, 4), Date.new(2022, 5, 6)]
+    #     }
+    #   )
+    #   df.cast({"foo" => Polars::Float32, "bar" => Polars::UInt8})
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬────────────┐
+    #   # │ foo ┆ bar ┆ ham        │
+    #   # │ --- ┆ --- ┆ ---        │
+    #   # │ f32 ┆ u8  ┆ date       │
+    #   # ╞═════╪═════╪════════════╡
+    #   # │ 1.0 ┆ 6   ┆ 2020-01-02 │
+    #   # │ 2.0 ┆ 7   ┆ 2021-03-04 │
+    #   # │ 3.0 ┆ 8   ┆ 2022-05-06 │
+    #   # └─────┴─────┴────────────┘
+    #
+    # @example Cast all frame columns matching one dtype (or dtype group) to another dtype:
+    #   df.cast({Polars::Date => Polars::Datetime})
+    #   # =>
+    #   # shape: (3, 3)
+    #   # ┌─────┬─────┬─────────────────────┐
+    #   # │ foo ┆ bar ┆ ham                 │
+    #   # │ --- ┆ --- ┆ ---                 │
+    #   # │ i64 ┆ f64 ┆ datetime[μs]        │
+    #   # ╞═════╪═════╪═════════════════════╡
+    #   # │ 1   ┆ 6.0 ┆ 2020-01-02 00:00:00 │
+    #   # │ 2   ┆ 7.0 ┆ 2021-03-04 00:00:00 │
+    #   # │ 3   ┆ 8.0 ┆ 2022-05-06 00:00:00 │
+    #   # └─────┴─────┴─────────────────────┘
+    #
+    # @example Cast all frame columns to the specified dtype:
+    #   df.cast(Polars::String).to_h(as_series: false)
+    #   # => {"foo"=>["1", "2", "3"], "bar"=>["6.0", "7.0", "8.0"], "ham"=>["2020-01-02", "2021-03-04", "2022-05-06"]}
+    def cast(dtypes, strict: true)
+      lazy.cast(dtypes, strict: strict).collect(_eager: true)
     end
 
     # Create an empty copy of the current DataFrame.
@@ -2860,7 +2966,7 @@ module Polars
     #       "c" => [true, true, false, nil]
     #     }
     #   )
-    #   df.cleared
+    #   df.clear
     #   # =>
     #   # shape: (0, 3)
     #   # ┌─────┬─────┬──────┐
@@ -2869,15 +2975,88 @@ module Polars
     #   # │ i64 ┆ f64 ┆ bool │
     #   # ╞═════╪═════╪══════╡
     #   # └─────┴─────┴──────┘
-    def cleared
-      height > 0 ? head(0) : clone
+    #
+    # @example
+    #   df.clear(2)
+    #   # =>
+    #   # shape: (2, 3)
+    #   # ┌──────┬──────┬──────┐
+    #   # │ a    ┆ b    ┆ c    │
+    #   # │ ---  ┆ ---  ┆ ---  │
+    #   # │ i64  ┆ f64  ┆ bool │
+    #   # ╞══════╪══════╪══════╡
+    #   # │ null ┆ null ┆ null │
+    #   # │ null ┆ null ┆ null │
+    #   # └──────┴──────┴──────┘
+    def clear(n = 0)
+      if n == 0
+        _from_rbdf(_df.clear)
+      elsif n > 0 || len > 0
+        self.class.new(
+          schema.to_h { |nm, tp| [nm, Series.new(nm, [], dtype: tp).extend_constant(nil, n)] }
+        )
+      else
+        clone
+      end
     end
+    alias_method :cleared, :clear
 
     # clone handled by initialize_copy
 
     # Get the DataFrame as a Array of Series.
     #
     # @return [Array]
+    #
+    # @example
+    #   df = Polars::DataFrame.new({"foo" => [1, 2, 3], "bar" => [4, 5, 6]})
+    #   df.get_columns
+    #   # =>
+    #   # [shape: (3,)
+    #   # Series: 'foo' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   # ], shape: (3,)
+    #   # Series: 'bar' [i64]
+    #   # [
+    #   #         4
+    #   #         5
+    #   #         6
+    #   # ]]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "a" => [1, 2, 3, 4],
+    #       "b" => [0.5, 4, 10, 13],
+    #       "c" => [true, true, false, true]
+    #     }
+    #   )
+    #   df.get_columns
+    #   # =>
+    #   # [shape: (4,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   #         4
+    #   # ], shape: (4,)
+    #   # Series: 'b' [f64]
+    #   # [
+    #   #         0.5
+    #   #         4.0
+    #   #         10.0
+    #   #         13.0
+    #   # ], shape: (4,)
+    #   # Series: 'c' [bool]
+    #   # [
+    #   #         true
+    #   #         true
+    #   #         false
+    #   #         true
+    #   # ]]
     def get_columns
       _df.get_columns.map { |s| Utils.wrap_s(s) }
     end
@@ -3069,9 +3248,9 @@ module Polars
     #   arguments contains multiple columns as well
     # @param index [Object]
     #   One or multiple keys to group by
-    # @param columns [Object]
+    # @param on [Object]
     #   Columns whose values will be used as the header of the output DataFrame
-    # @param aggregate_fn ["first", "sum", "max", "min", "mean", "median", "last", "count"]
+    # @param aggregate_function ["first", "sum", "max", "min", "mean", "median", "last", "count"]
     #   A predefined aggregate function str or an expression.
     # @param maintain_order [Object]
     #   Sort the grouped keys so that the output order is predictable.
@@ -3083,63 +3262,62 @@ module Polars
     # @example
     #   df = Polars::DataFrame.new(
     #     {
-    #       "foo" => ["one", "one", "one", "two", "two", "two"],
-    #       "bar" => ["A", "B", "C", "A", "B", "C"],
+    #       "foo" => ["one", "one", "two", "two", "one", "two"],
+    #       "bar" => ["y", "y", "y", "x", "x", "x"],
     #       "baz" => [1, 2, 3, 4, 5, 6]
     #     }
     #   )
-    #   df.pivot(values: "baz", index: "foo", columns: "bar")
+    #   df.pivot("bar", index: "foo", values: "baz", aggregate_function: "sum")
     #   # =>
-    #   # shape: (2, 4)
-    #   # ┌─────┬─────┬─────┬─────┐
-    #   # │ foo ┆ A   ┆ B   ┆ C   │
-    #   # │ --- ┆ --- ┆ --- ┆ --- │
-    #   # │ str ┆ i64 ┆ i64 ┆ i64 │
-    #   # ╞═════╪═════╪═════╪═════╡
-    #   # │ one ┆ 1   ┆ 2   ┆ 3   │
-    #   # │ two ┆ 4   ┆ 5   ┆ 6   │
-    #   # └─────┴─────┴─────┴─────┘
+    #   # shape: (2, 3)
+    #   # ┌─────┬─────┬─────┐
+    #   # │ foo ┆ y   ┆ x   │
+    #   # │ --- ┆ --- ┆ --- │
+    #   # │ str ┆ i64 ┆ i64 │
+    #   # ╞═════╪═════╪═════╡
+    #   # │ one ┆ 3   ┆ 5   │
+    #   # │ two ┆ 3   ┆ 10  │
+    #   # └─────┴─────┴─────┘
     def pivot(
-      values:,
-      index:,
-      columns:,
-      aggregate_fn: "first",
+      on,
+      index: nil,
+      values: nil,
+      aggregate_function: nil,
       maintain_order: true,
       sort_columns: false,
       separator: "_"
     )
-      if values.is_a?(String)
-        values = [values]
-      end
-      if index.is_a?(String)
-        index = [index]
-      end
-      if columns.is_a?(String)
-        columns = [columns]
+      index = Utils._expand_selectors(self, index)
+      on = Utils._expand_selectors(self, on)
+      if !values.nil?
+        values = Utils._expand_selectors(self, values)
       end
 
-      if aggregate_fn.is_a?(String)
-        case aggregate_fn
+      if aggregate_function.is_a?(::String)
+        case aggregate_function
         when "first"
-          aggregate_expr = Polars.element.first._rbexpr
+          aggregate_expr = F.element.first._rbexpr
         when "sum"
-          aggregate_expr = Polars.element.sum._rbexpr
+          aggregate_expr = F.element.sum._rbexpr
         when "max"
-          aggregate_expr = Polars.element.max._rbexpr
+          aggregate_expr = F.element.max._rbexpr
         when "min"
-          aggregate_expr = Polars.element.min._rbexpr
+          aggregate_expr = F.element.min._rbexpr
         when "mean"
-          aggregate_expr = Polars.element.mean._rbexpr
+          aggregate_expr = F.element.mean._rbexpr
         when "median"
-          aggregate_expr = Polars.element.median._rbexpr
+          aggregate_expr = F.element.median._rbexpr
         when "last"
-          aggregate_expr = Polars.element.last._rbexpr
+          aggregate_expr = F.element.last._rbexpr
+        when "len"
+          aggregate_expr = F.len._rbexpr
         when "count"
-          aggregate_expr = Polars.count._rbexpr
+          warn "`aggregate_function: \"count\"` input for `pivot` is deprecated. Use `aggregate_function: \"len\"` instead."
+          aggregate_expr = F.len._rbexpr
         else
           raise ArgumentError, "Argument aggregate fn: '#{aggregate_fn}' was not expected."
         end
-      elsif aggregate_fn.nil?
+      elsif aggregate_function.nil?
         aggregate_expr = nil
       else
         aggregate_expr = aggregate_function._rbexpr
@@ -3147,9 +3325,9 @@ module Polars
 
       _from_rbdf(
         _df.pivot_expr(
-          values,
+          on,
           index,
-          columns,
+          values,
           maintain_order,
           sort_columns,
           aggregate_expr,
@@ -3163,18 +3341,18 @@ module Polars
     # Optionally leaves identifiers set.
     #
     # This function is useful to massage a DataFrame into a format where one or more
-    # columns are identifier variables (id_vars), while all other columns, considered
-    # measured variables (value_vars), are "unpivoted" to the row axis, leaving just
+    # columns are identifier variables (index) while all other columns, considered
+    # measured variables (on), are "unpivoted" to the row axis leaving just
     # two non-identifier columns, 'variable' and 'value'.
     #
-    # @param id_vars [Object]
-    #   Columns to use as identifier variables.
-    # @param value_vars [Object]
-    #   Values to use as identifier variables.
-    #   If `value_vars` is empty all columns that are not in `id_vars` will be used.
-    # @param variable_name [String]
-    #   Name to give to the `value` column. Defaults to "variable"
-    # @param value_name [String]
+    # @param on [Object]
+    #   Column(s) or selector(s) to use as values variables; if `on`
+    #   is empty all columns that are not in `index` will be used.
+    # @param index [Object]
+    #   Column(s) or selector(s) to use as identifier variables.
+    # @param variable_name [Object]
+    #   Name to give to the `variable` column. Defaults to "variable"
+    # @param value_name [Object]
     #   Name to give to the `value` column. Defaults to "value"
     #
     # @return [DataFrame]
@@ -3187,7 +3365,7 @@ module Polars
     #       "c" => [2, 4, 6]
     #     }
     #   )
-    #   df.melt(id_vars: "a", value_vars: ["b", "c"])
+    #   df.unpivot(Polars.cs.numeric, index: "a")
     #   # =>
     #   # shape: (6, 3)
     #   # ┌─────┬──────────┬───────┐
@@ -3202,23 +3380,13 @@ module Polars
     #   # │ y   ┆ c        ┆ 4     │
     #   # │ z   ┆ c        ┆ 6     │
     #   # └─────┴──────────┴───────┘
-    def melt(id_vars: nil, value_vars: nil, variable_name: nil, value_name: nil)
-      if value_vars.is_a?(String)
-        value_vars = [value_vars]
-      end
-      if id_vars.is_a?(String)
-        id_vars = [id_vars]
-      end
-      if value_vars.nil?
-        value_vars = []
-      end
-      if id_vars.nil?
-        id_vars = []
-      end
-      _from_rbdf(
-        _df.melt(id_vars, value_vars, value_name, variable_name)
-      )
+    def unpivot(on, index: nil, variable_name: nil, value_name: nil)
+      on = on.nil? ? [] : Utils._expand_selectors(self, on)
+      index = index.nil? ? [] : Utils._expand_selectors(self, index)
+
+      _from_rbdf(_df.unpivot(on, index, value_name, variable_name))
     end
+    alias_method :melt, :unpivot
 
     # Unstack a long table to a wide form without doing an aggregation.
     #
@@ -3420,7 +3588,7 @@ module Polars
     #   # │ C   ┆ 2   ┆ l   │
     #   # └─────┴─────┴─────┘}
     def partition_by(groups, maintain_order: true, include_key: true, as_dict: false)
-      if groups.is_a?(String)
+      if groups.is_a?(::String)
         groups = [groups]
       elsif !groups.is_a?(::Array)
         groups = Array(groups)
@@ -3447,8 +3615,10 @@ module Polars
 
     # Shift values by the given period.
     #
-    # @param periods [Integer]
+    # @param n [Integer]
     #   Number of places to shift (may be negative).
+    # @param fill_value [Object]
+    #  Fill the resulting null values with this value.
     #
     # @return [DataFrame]
     #
@@ -3486,8 +3656,8 @@ module Polars
     #   # │ 3    ┆ 8    ┆ c    │
     #   # │ null ┆ null ┆ null │
     #   # └──────┴──────┴──────┘
-    def shift(periods)
-      _from_rbdf(_df.shift(periods))
+    def shift(n, fill_value: nil)
+      lazy.shift(n, fill_value: fill_value).collect(_eager: true)
     end
 
     # Shift the values by a given period and fill the resulting null values.
@@ -3520,9 +3690,7 @@ module Polars
     #   # │ 2   ┆ 7   ┆ b   │
     #   # └─────┴─────┴─────┘
     def shift_and_fill(periods, fill_value)
-      lazy
-        .shift_and_fill(periods, fill_value)
-        .collect(no_optimization: true, string_cache: false)
+      shift(periods, fill_value: fill_value)
     end
 
     # Get a mask of all duplicated rows in this DataFrame.
@@ -3584,8 +3752,13 @@ module Polars
 
     # Select columns from this DataFrame.
     #
-    # @param exprs [Object]
-    #   Column or columns to select.
+    # @param exprs [Array]
+    #   Column(s) to select, specified as positional arguments.
+    #   Accepts expression input. Strings are parsed as column names,
+    #   other non-expression inputs are parsed as literals.
+    # @param named_exprs [Hash]
+    #   Additional columns to select, specified as keyword arguments.
+    #   The columns will be renamed to the keyword used.
     #
     # @return [DataFrame]
     #
@@ -3659,29 +3832,31 @@ module Polars
     #   # ┌─────────┐
     #   # │ literal │
     #   # │ ---     │
-    #   # │ i64     │
+    #   # │ i32     │
     #   # ╞═════════╡
     #   # │ 0       │
     #   # │ 0       │
     #   # │ 10      │
     #   # └─────────┘
-    def select(exprs)
-      _from_rbdf(
-        lazy
-          .select(exprs)
-          .collect(no_optimization: true, string_cache: false)
-          ._df
-      )
+    def select(*exprs, **named_exprs)
+      lazy.select(*exprs, **named_exprs).collect(_eager: true)
     end
 
-    # Add or overwrite multiple columns in a DataFrame.
+    # Add columns to this DataFrame.
+    #
+    # Added columns will replace existing columns with the same name.
     #
     # @param exprs [Array]
-    #   Array of Expressions that evaluate to columns.
+    #   Column(s) to add, specified as positional arguments.
+    #   Accepts expression input. Strings are parsed as column names, other
+    #   non-expression inputs are parsed as literals.
+    # @param named_exprs [Hash]
+    #   Additional columns to add, specified as keyword arguments.
+    #   The columns will be renamed to the keyword used.
     #
     # @return [DataFrame]
     #
-    # @example
+    # @example Pass an expression to add it as a new column.
     #   df = Polars::DataFrame.new(
     #     {
     #       "a" => [1, 2, 3, 4],
@@ -3689,32 +3864,94 @@ module Polars
     #       "c" => [true, true, false, true]
     #     }
     #   )
+    #   df.with_columns((Polars.col("a") ** 2).alias("a^2"))
+    #   # =>
+    #   # shape: (4, 4)
+    #   # ┌─────┬──────┬───────┬─────┐
+    #   # │ a   ┆ b    ┆ c     ┆ a^2 │
+    #   # │ --- ┆ ---  ┆ ---   ┆ --- │
+    #   # │ i64 ┆ f64  ┆ bool  ┆ i64 │
+    #   # ╞═════╪══════╪═══════╪═════╡
+    #   # │ 1   ┆ 0.5  ┆ true  ┆ 1   │
+    #   # │ 2   ┆ 4.0  ┆ true  ┆ 4   │
+    #   # │ 3   ┆ 10.0 ┆ false ┆ 9   │
+    #   # │ 4   ┆ 13.0 ┆ true  ┆ 16  │
+    #   # └─────┴──────┴───────┴─────┘
+    #
+    # @example Added columns will replace existing columns with the same name.
+    #   df.with_columns(Polars.col("a").cast(Polars::Float64))
+    #   # =>
+    #   # shape: (4, 3)
+    #   # ┌─────┬──────┬───────┐
+    #   # │ a   ┆ b    ┆ c     │
+    #   # │ --- ┆ ---  ┆ ---   │
+    #   # │ f64 ┆ f64  ┆ bool  │
+    #   # ╞═════╪══════╪═══════╡
+    #   # │ 1.0 ┆ 0.5  ┆ true  │
+    #   # │ 2.0 ┆ 4.0  ┆ true  │
+    #   # │ 3.0 ┆ 10.0 ┆ false │
+    #   # │ 4.0 ┆ 13.0 ┆ true  │
+    #   # └─────┴──────┴───────┘
+    #
+    # @example Multiple columns can be added by passing a list of expressions.
     #   df.with_columns(
     #     [
     #       (Polars.col("a") ** 2).alias("a^2"),
     #       (Polars.col("b") / 2).alias("b/2"),
-    #       (Polars.col("c").is_not).alias("not c")
+    #       (Polars.col("c").not_).alias("not c"),
     #     ]
     #   )
     #   # =>
     #   # shape: (4, 6)
-    #   # ┌─────┬──────┬───────┬──────┬──────┬───────┐
-    #   # │ a   ┆ b    ┆ c     ┆ a^2  ┆ b/2  ┆ not c │
-    #   # │ --- ┆ ---  ┆ ---   ┆ ---  ┆ ---  ┆ ---   │
-    #   # │ i64 ┆ f64  ┆ bool  ┆ f64  ┆ f64  ┆ bool  │
-    #   # ╞═════╪══════╪═══════╪══════╪══════╪═══════╡
-    #   # │ 1   ┆ 0.5  ┆ true  ┆ 1.0  ┆ 0.25 ┆ false │
-    #   # │ 2   ┆ 4.0  ┆ true  ┆ 4.0  ┆ 2.0  ┆ false │
-    #   # │ 3   ┆ 10.0 ┆ false ┆ 9.0  ┆ 5.0  ┆ true  │
-    #   # │ 4   ┆ 13.0 ┆ true  ┆ 16.0 ┆ 6.5  ┆ false │
-    #   # └─────┴──────┴───────┴──────┴──────┴───────┘
-    def with_columns(exprs)
-      if !exprs.nil? && !exprs.is_a?(::Array)
-        exprs = [exprs]
-      end
-      lazy
-        .with_columns(exprs)
-        .collect(no_optimization: true, string_cache: false)
+    #   # ┌─────┬──────┬───────┬─────┬──────┬───────┐
+    #   # │ a   ┆ b    ┆ c     ┆ a^2 ┆ b/2  ┆ not c │
+    #   # │ --- ┆ ---  ┆ ---   ┆ --- ┆ ---  ┆ ---   │
+    #   # │ i64 ┆ f64  ┆ bool  ┆ i64 ┆ f64  ┆ bool  │
+    #   # ╞═════╪══════╪═══════╪═════╪══════╪═══════╡
+    #   # │ 1   ┆ 0.5  ┆ true  ┆ 1   ┆ 0.25 ┆ false │
+    #   # │ 2   ┆ 4.0  ┆ true  ┆ 4   ┆ 2.0  ┆ false │
+    #   # │ 3   ┆ 10.0 ┆ false ┆ 9   ┆ 5.0  ┆ true  │
+    #   # │ 4   ┆ 13.0 ┆ true  ┆ 16  ┆ 6.5  ┆ false │
+    #   # └─────┴──────┴───────┴─────┴──────┴───────┘
+    #
+    # @example Multiple columns also can be added using positional arguments instead of a list.
+    #   df.with_columns(
+    #     (Polars.col("a") ** 2).alias("a^2"),
+    #     (Polars.col("b") / 2).alias("b/2"),
+    #     (Polars.col("c").not_).alias("not c"),
+    #   )
+    #   # =>
+    #   # shape: (4, 6)
+    #   # ┌─────┬──────┬───────┬─────┬──────┬───────┐
+    #   # │ a   ┆ b    ┆ c     ┆ a^2 ┆ b/2  ┆ not c │
+    #   # │ --- ┆ ---  ┆ ---   ┆ --- ┆ ---  ┆ ---   │
+    #   # │ i64 ┆ f64  ┆ bool  ┆ i64 ┆ f64  ┆ bool  │
+    #   # ╞═════╪══════╪═══════╪═════╪══════╪═══════╡
+    #   # │ 1   ┆ 0.5  ┆ true  ┆ 1   ┆ 0.25 ┆ false │
+    #   # │ 2   ┆ 4.0  ┆ true  ┆ 4   ┆ 2.0  ┆ false │
+    #   # │ 3   ┆ 10.0 ┆ false ┆ 9   ┆ 5.0  ┆ true  │
+    #   # │ 4   ┆ 13.0 ┆ true  ┆ 16  ┆ 6.5  ┆ false │
+    #   # └─────┴──────┴───────┴─────┴──────┴───────┘
+    #
+    # @example Use keyword arguments to easily name your expression inputs.
+    #   df.with_columns(
+    #     ab: Polars.col("a") * Polars.col("b"),
+    #     not_c: Polars.col("c").not_
+    #   )
+    #   # =>
+    #   # shape: (4, 5)
+    #   # ┌─────┬──────┬───────┬──────┬───────┐
+    #   # │ a   ┆ b    ┆ c     ┆ ab   ┆ not_c │
+    #   # │ --- ┆ ---  ┆ ---   ┆ ---  ┆ ---   │
+    #   # │ i64 ┆ f64  ┆ bool  ┆ f64  ┆ bool  │
+    #   # ╞═════╪══════╪═══════╪══════╪═══════╡
+    #   # │ 1   ┆ 0.5  ┆ true  ┆ 0.5  ┆ false │
+    #   # │ 2   ┆ 4.0  ┆ true  ┆ 8.0  ┆ false │
+    #   # │ 3   ┆ 10.0 ┆ false ┆ 30.0 ┆ true  │
+    #   # │ 4   ┆ 13.0 ┆ true  ┆ 52.0 ┆ false │
+    #   # └─────┴──────┴───────┴──────┴───────┘
+    def with_columns(*exprs, **named_exprs)
+      lazy.with_columns(*exprs, **named_exprs).collect(_eager: true)
     end
 
     # Get number of chunks used by the ChunkedArrays of this DataFrame.
@@ -3769,14 +4006,32 @@ module Polars
     #   # ╞═════╪═════╪═════╡
     #   # │ 3   ┆ 8   ┆ c   │
     #   # └─────┴─────┴─────┘
-    def max(axis: 0)
-      if axis == 0
-        _from_rbdf(_df.max)
-      elsif axis == 1
-        Utils.wrap_s(_df.hmax)
-      else
-        raise ArgumentError, "Axis should be 0 or 1."
-      end
+    def max
+      lazy.max.collect(_eager: true)
+    end
+
+    # Get the maximum value horizontally across columns.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [4.0, 5.0, 6.0]
+    #     }
+    #   )
+    #   df.max_horizontal
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'max' [f64]
+    #   # [
+    #   #         4.0
+    #   #         5.0
+    #   #         6.0
+    #   # ]
+    def max_horizontal
+      select(max: F.max_horizontal(F.all)).to_series
     end
 
     # Aggregate the columns of this DataFrame to their minimum value.
@@ -3801,22 +4056,35 @@ module Polars
     #   # ╞═════╪═════╪═════╡
     #   # │ 1   ┆ 6   ┆ a   │
     #   # └─────┴─────┴─────┘
-    def min(axis: 0)
-      if axis == 0
-        _from_rbdf(_df.min)
-      elsif axis == 1
-        Utils.wrap_s(_df.hmin)
-      else
-        raise ArgumentError, "Axis should be 0 or 1."
-      end
+    def min
+      lazy.min.collect(_eager: true)
+    end
+
+    # Get the minimum value horizontally across columns.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [4.0, 5.0, 6.0]
+    #     }
+    #   )
+    #   df.min_horizontal
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'min' [f64]
+    #   # [
+    #   #         1.0
+    #   #         2.0
+    #   #         3.0
+    #   # ]
+    def min_horizontal
+      select(min: F.min_horizontal(F.all)).to_series
     end
 
     # Aggregate the columns of this DataFrame to their sum value.
-    #
-    # @param axis [Integer]
-    #   Either 0 or 1.
-    # @param null_strategy ["ignore", "propagate"]
-    #   This argument is only used if axis == 1.
     #
     # @return [DataFrame]
     #
@@ -3838,34 +4106,41 @@ module Polars
     #   # ╞═════╪═════╪══════╡
     #   # │ 6   ┆ 21  ┆ null │
     #   # └─────┴─────┴──────┘
+    def sum
+      lazy.sum.collect(_eager: true)
+    end
+
+    # Sum all values horizontally across columns.
+    #
+    # @param ignore_nulls [Boolean]
+    #   Ignore null values (default).
+    #   If set to `false`, any null value in the input will lead to a null output.
+    #
+    # @return [Series]
     #
     # @example
-    #   df.sum(axis: 1)
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [4.0, 5.0, 6.0]
+    #     }
+    #   )
+    #   df.sum_horizontal
     #   # =>
     #   # shape: (3,)
-    #   # Series: 'foo' [str]
+    #   # Series: 'sum' [f64]
     #   # [
-    #   #         "16a"
-    #   #         "27b"
-    #   #         "38c"
+    #   #         5.0
+    #   #         7.0
+    #   #         9.0
     #   # ]
-    def sum(axis: 0, null_strategy: "ignore")
-      case axis
-      when 0
-        _from_rbdf(_df.sum)
-      when 1
-        Utils.wrap_s(_df.hsum(null_strategy))
-      else
-        raise ArgumentError, "Axis should be 0 or 1."
-      end
+    def sum_horizontal(ignore_nulls: true)
+      select(
+        sum: F.sum_horizontal(F.all, ignore_nulls: ignore_nulls)
+      ).to_series
     end
 
     # Aggregate the columns of this DataFrame to their mean value.
-    #
-    # @param axis [Integer]
-    #   Either 0 or 1.
-    # @param null_strategy ["ignore", "propagate"]
-    #   This argument is only used if axis == 1.
     #
     # @return [DataFrame]
     #
@@ -3887,15 +4162,38 @@ module Polars
     #   # ╞═════╪═════╪══════╡
     #   # │ 2.0 ┆ 7.0 ┆ null │
     #   # └─────┴─────┴──────┘
-    def mean(axis: 0, null_strategy: "ignore")
-      case axis
-      when 0
-        _from_rbdf(_df.mean)
-      when 1
-        Utils.wrap_s(_df.hmean(null_strategy))
-      else
-        raise ArgumentError, "Axis should be 0 or 1."
-      end
+    def mean
+      lazy.mean.collect(_eager: true)
+    end
+
+    # Take the mean of all values horizontally across columns.
+    #
+    # @param ignore_nulls [Boolean]
+    #   Ignore null values (default).
+    #   If set to `false`, any null value in the input will lead to a null output.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   df = Polars::DataFrame.new(
+    #     {
+    #       "foo" => [1, 2, 3],
+    #       "bar" => [4.0, 5.0, 6.0]
+    #     }
+    #   )
+    #   df.mean_horizontal
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'mean' [f64]
+    #   # [
+    #   #         2.5
+    #   #         3.5
+    #   #         4.5
+    #   # ]
+    def mean_horizontal(ignore_nulls: true)
+      select(
+        mean: F.mean_horizontal(F.all, ignore_nulls: ignore_nulls)
+      ).to_series
     end
 
     # Aggregate the columns of this DataFrame to their standard deviation value.
@@ -3936,7 +4234,7 @@ module Polars
     #   # │ 0.816497 ┆ 0.816497 ┆ null │
     #   # └──────────┴──────────┴──────┘
     def std(ddof: 1)
-      _from_rbdf(_df.std(ddof))
+      lazy.std(ddof: ddof).collect(_eager: true)
     end
 
     # Aggregate the columns of this DataFrame to their variance value.
@@ -3977,7 +4275,7 @@ module Polars
     #   # │ 0.666667 ┆ 0.666667 ┆ null │
     #   # └──────────┴──────────┴──────┘
     def var(ddof: 1)
-      _from_rbdf(_df.var(ddof))
+      lazy.var(ddof: ddof).collect(_eager: true)
     end
 
     # Aggregate the columns of this DataFrame to their median value.
@@ -4003,7 +4301,7 @@ module Polars
     #   # │ 2.0 ┆ 7.0 ┆ null │
     #   # └─────┴─────┴──────┘
     def median
-      _from_rbdf(_df.median)
+      lazy.median.collect(_eager: true)
     end
 
     # Aggregate the columns of this DataFrame to their product values.
@@ -4060,7 +4358,7 @@ module Polars
     #   # │ 2.0 ┆ 7.0 ┆ null │
     #   # └─────┴─────┴──────┘
     def quantile(quantile, interpolation: "nearest")
-      _from_rbdf(_df.quantile(quantile, interpolation))
+      lazy.quantile(quantile, interpolation: interpolation).collect(_eager: true)
     end
 
     # Get one hot encoded dummy variables.
@@ -4091,7 +4389,7 @@ module Polars
     #   # │ 0     ┆ 1     ┆ 0     ┆ 1     ┆ 0     ┆ 1     │
     #   # └───────┴───────┴───────┴───────┴───────┴───────┘
     def to_dummies(columns: nil, separator: "_", drop_first: false)
-      if columns.is_a?(String)
+      if columns.is_a?(::String)
         columns = [columns]
       end
       _from_rbdf(_df.to_dummies(columns, separator, drop_first))
@@ -4183,7 +4481,7 @@ module Polars
       end
 
       if subset.is_a?(::Array) && subset.length == 1
-        expr = Utils.expr_to_lit_or_expr(subset[0], str_to_lit: false)
+        expr = Utils.wrap_expr(Utils.parse_into_expression(subset[0], str_as_lit: false))
       else
         struct_fields = subset.nil? ? Polars.all : subset
         expr = Polars.struct(struct_fields)
@@ -4279,7 +4577,7 @@ module Polars
       if n.nil? && !frac.nil?
         frac = Series.new("frac", [frac]) unless frac.is_a?(Series)
 
-        _from_rbdf(
+        return _from_rbdf(
           _df.sample_frac(frac._s, with_replacement, shuffle, seed)
         )
       end
@@ -4341,7 +4639,7 @@ module Polars
     # @example A horizontal string concatenation:
     #   df = Polars::DataFrame.new(
     #     {
-    #       "a" => ["foo", "bar", 2],
+    #       "a" => ["foo", "bar", nil],
     #       "b" => [1, 2, 3],
     #       "c" => [1.0, 2.0, 3.0]
     #     }
@@ -4356,7 +4654,7 @@ module Polars
     #   #         null
     #   # ]
     #
-    # @example A horizontal boolean or, similar to a row-wise .any():
+    # @example A horizontal boolean or, similar to a row-wise .any:
     #   df = Polars::DataFrame.new(
     #     {
     #       "a" => [false, false, true],
@@ -4372,11 +4670,11 @@ module Polars
     #   #         true
     #   #         true
     #   # ]
-    def fold(&operation)
+    def fold
       acc = to_series(0)
 
       1.upto(width - 1) do |i|
-        acc = operation.call(acc, to_series(i))
+        acc = yield(acc, to_series(i))
       end
       acc
     end
@@ -4479,7 +4777,7 @@ module Polars
     #   # => [{"a"=>1, "b"=>2}, {"a"=>3, "b"=>4}, {"a"=>5, "b"=>6}]
     def rows(named: false)
       if named
-        columns = columns()
+        columns = self.columns
         _df.row_tuples.map do |v|
           columns.zip(v).to_h
         end
@@ -4520,7 +4818,7 @@ module Polars
       return to_enum(:iter_rows, named: named, buffer_size: buffer_size) unless block_given?
 
       # load into the local namespace for a modest performance boost in the hot loops
-      columns = columns()
+      columns = self.columns
 
       # note: buffering rows results in a 2-4x speedup over individual calls
       # to ".row(i)", so it should only be disabled in extremely specific cases.
@@ -4589,7 +4887,7 @@ module Polars
     #
     # @example
     #   s = Polars::DataFrame.new({"a" => [1, 2, 3, 4], "b" => [5, 6, 7, 8]})
-    #   s.take_every(2)
+    #   s.gather_every(2)
     #   # =>
     #   # shape: (2, 2)
     #   # ┌─────┬─────┐
@@ -4600,9 +4898,10 @@ module Polars
     #   # │ 1   ┆ 5   │
     #   # │ 3   ┆ 7   │
     #   # └─────┴─────┘
-    def take_every(n)
-      select(Utils.col("*").take_every(n))
+    def gather_every(n, offset = 0)
+      select(F.col("*").gather_every(n, offset))
     end
+    alias_method :take_every, :gather_every
 
     # Hash and combine the rows in this DataFrame.
     #
@@ -4670,7 +4969,7 @@ module Polars
     #   # │ 10.0 ┆ null ┆ 9.0      │
     #   # └──────┴──────┴──────────┘
     def interpolate
-      select(Utils.col("*").interpolate)
+      select(F.col("*").interpolate)
     end
 
     # Check if the dataframe is empty.
@@ -4750,37 +5049,77 @@ module Polars
     #   # │ bar    ┆ 2   ┆ b   ┆ null ┆ [3]       ┆ womp  │
     #   # └────────┴─────┴─────┴──────┴───────────┴───────┘
     def unnest(names)
-      if names.is_a?(String)
+      if names.is_a?(::String)
         names = [names]
       end
       _from_rbdf(_df.unnest(names))
     end
 
-    # TODO
+    # Requires NumPy
     # def corr
     # end
 
-    # TODO
-    # def merge_sorted
-    # end
+    # Take two sorted DataFrames and merge them by the sorted key.
+    #
+    # The output of this operation will also be sorted.
+    # It is the callers responsibility that the frames are sorted
+    # by that key otherwise the output will not make sense.
+    #
+    # The schemas of both DataFrames must be equal.
+    #
+    # @param other [DataFrame]
+    #   Other DataFrame that must be merged
+    # @param key [String]
+    #   Key that is sorted.
+    #
+    # @return [DataFrame]
+    #
+    # @example
+    #   df0 = Polars::DataFrame.new(
+    #     {"name" => ["steve", "elise", "bob"], "age" => [42, 44, 18]}
+    #   ).sort("age")
+    #   df1 = Polars::DataFrame.new(
+    #     {"name" => ["anna", "megan", "steve", "thomas"], "age" => [21, 33, 42, 20]}
+    #   ).sort("age")
+    #   df0.merge_sorted(df1, "age")
+    #   # =>
+    #   # shape: (7, 2)
+    #   # ┌────────┬─────┐
+    #   # │ name   ┆ age │
+    #   # │ ---    ┆ --- │
+    #   # │ str    ┆ i64 │
+    #   # ╞════════╪═════╡
+    #   # │ bob    ┆ 18  │
+    #   # │ thomas ┆ 20  │
+    #   # │ anna   ┆ 21  │
+    #   # │ megan  ┆ 33  │
+    #   # │ steve  ┆ 42  │
+    #   # │ steve  ┆ 42  │
+    #   # │ elise  ┆ 44  │
+    #   # └────────┴─────┘
+    def merge_sorted(other, key)
+      lazy.merge_sorted(other.lazy, key).collect(_eager: true)
+    end
 
-    # Indicate that one or multiple columns are sorted.
+    # Flag a column as sorted.
+    #
+    # This can speed up future operations.
+    #
+    # @note
+    #   This can lead to incorrect results if the data is NOT sorted! Use with care!
     #
     # @param column [Object]
-    #   Columns that are sorted
-    # @param more_columns [Object]
-    #   Additional columns that are sorted, specified as positional arguments.
+    #   Column that is sorted.
     # @param descending [Boolean]
-    #   Whether the columns are sorted in descending order.
+    #   Whether the column is sorted in descending order.
     #
     # @return [DataFrame]
     def set_sorted(
       column,
-      *more_columns,
       descending: false
     )
       lazy
-        .set_sorted(column, *more_columns, descending: descending)
+        .set_sorted(column, descending: descending)
         .collect(no_optimization: true)
     end
 
@@ -4804,7 +5143,7 @@ module Polars
     end
 
     def _pos_idxs(idxs, dim)
-      idx_type = Polars._get_idx_type
+      idx_type = Plr.get_index_type
 
       if idxs.is_a?(Series)
         if idxs.dtype == idx_type
@@ -4852,7 +5191,7 @@ module Polars
     end
 
     # @private
-    def self.expand_hash_scalars(data, schema_overrides: nil, order: nil, nan_to_null: false)
+    def self.expand_hash_scalars(data, schema_overrides: nil, strict: true, order: nil, nan_to_null: false)
       updated_data = {}
       unless data.empty?
         dtypes = schema_overrides || {}
@@ -4861,23 +5200,23 @@ module Polars
           data.each do |name, val|
             dtype = dtypes[name]
             if val.is_a?(Hash) && dtype != Struct
-              updated_data[name] = DataFrame.new(val).to_struct(name)
+              updated_data[name] = DataFrame.new(val, strict: strict).to_struct(name)
             elsif !Utils.arrlen(val).nil?
-              updated_data[name] = Series.new(String.new(name), val, dtype: dtype)
-            elsif val.nil? || [Integer, Float, TrueClass, FalseClass, String, ::Date, ::DateTime, ::Time].any? { |cls| val.is_a?(cls) }
+              updated_data[name] = Series.new(::String.new(name), val, dtype: dtype, strict: strict)
+            elsif val.nil? || [Integer, Float, TrueClass, FalseClass, ::String, ::Date, ::DateTime, ::Time].any? { |cls| val.is_a?(cls) }
               dtype = Polars::Float64 if val.nil? && dtype.nil?
-              updated_data[name] = Series.new(String.new(name), [val], dtype: dtype).extend_constant(val, array_len - 1)
+              updated_data[name] = Series.new(::String.new(name), [val], dtype: dtype, strict: strict).extend_constant(val, array_len - 1)
             else
               raise Todo
             end
           end
         elsif data.values.all? { |val| Utils.arrlen(val) == 0 }
           data.each do |name, val|
-            updated_data[name] = Series.new(name, val, dtype: dtypes[name])
+            updated_data[name] = Series.new(name, val, dtype: dtypes[name], strict: strict)
           end
         elsif data.values.all? { |val| Utils.arrlen(val).nil? }
           data.each do |name, val|
-            updated_data[name] = Series.new(name, [val], dtype: dtypes[name])
+            updated_data[name] = Series.new(name, [val], dtype: dtypes[name], strict: strict)
           end
         end
       end
@@ -4885,7 +5224,7 @@ module Polars
     end
 
     # @private
-    def self.hash_to_rbdf(data, schema: nil, schema_overrides: nil, nan_to_null: nil)
+    def self.hash_to_rbdf(data, schema: nil, schema_overrides: nil, strict: true, nan_to_null: nil)
       if schema.is_a?(Hash) && !data.empty?
         if !data.all? { |col, _| schema[col] }
           raise ArgumentError, "The given column-schema names do not match the data dictionary"
@@ -4902,9 +5241,9 @@ module Polars
       end
 
       if data.empty? && !schema_overrides.empty?
-        data_series = column_names.map { |name| Series.new(name, [], dtype: schema_overrides[name], nan_to_null: nan_to_null)._s }
+        data_series = column_names.map { |name| Series.new(name, [], dtype: schema_overrides[name], strict: strict, nan_to_null: nan_to_null)._s }
       else
-        data_series = expand_hash_scalars(data, schema_overrides: schema_overrides, nan_to_null: nan_to_null).values.map(&:_s)
+        data_series = expand_hash_scalars(data, schema_overrides: schema_overrides, strict: strict, nan_to_null: nan_to_null).values.map(&:_s)
       end
 
       data_series = _handle_columns_arg(data_series, columns: column_names, from_hash: true)
@@ -4923,7 +5262,7 @@ module Polars
       end
       column_names =
         (schema || []).map.with_index do |col, i|
-          if col.is_a?(String)
+          if col.is_a?(::String)
             col || "column_#{i}"
           else
             col[0]
@@ -4936,7 +5275,7 @@ module Polars
       lookup = column_names.zip(lookup_names || []).to_h
 
       column_dtypes =
-        (schema || []).select { |col| !col.is_a?(String) && col[1] }.to_h do |col|
+        (schema || []).select { |col| !col.is_a?(::String) && col[1] }.to_h do |col|
           [lookup[col[0]] || col[0], col[1]]
         end
 
@@ -4978,7 +5317,7 @@ module Polars
       end
     end
 
-    def self._post_apply_columns(rbdf, columns, structs: nil, schema_overrides: nil)
+    def self._post_apply_columns(rbdf, columns, structs: nil, schema_overrides: nil, strict: true)
       rbdf_columns = rbdf.columns
       rbdf_dtypes = rbdf.dtypes
       columns, dtypes = _unpack_schema(
@@ -4994,13 +5333,13 @@ module Polars
       end
 
       column_casts = []
-      columns.each do |col, i|
+      columns.each_with_index do |col, i|
         if dtypes[col] == Categorical # != rbdf_dtypes[i]
-          column_casts << Polars.col(col).cast(Categorical)._rbexpr
+          column_casts << Polars.col(col).cast(Categorical, strict: strict)._rbexpr
         elsif structs&.any? && structs.include?(col) && structs[col] != rbdf_dtypes[i]
-          column_casts << Polars.col(col).cast(structs[col])._rbexpr
+          column_casts << Polars.col(col).cast(structs[col], strict: strict)._rbexpr
         elsif dtypes.include?(col) && dtypes[col] != rbdf_dtypes[i]
-          column_casts << Polars.col(col).cast(dtypes[col])._rbexpr
+          column_casts << Polars.col(col).cast(dtypes[col], strict: strict)._rbexpr
         end
       end
 
@@ -5019,12 +5358,11 @@ module Polars
     end
 
     # @private
-    def self.sequence_to_rbdf(data, schema: nil, schema_overrides: nil, orient: nil, infer_schema_length: 50)
-      raise Todo if schema_overrides
+    def self.sequence_to_rbdf(data, schema: nil, schema_overrides: nil, strict: true, orient: nil, infer_schema_length: 50)
       columns = schema
 
       if data.length == 0
-        return hash_to_rbdf({}, schema: schema, schema_overrides: schema_overrides)
+        return hash_to_rbdf({}, schema: schema, schema_overrides: schema_overrides, strict: strict)
       end
 
       if data[0].is_a?(Series)
@@ -5037,14 +5375,14 @@ module Polars
       elsif data[0].is_a?(Hash)
         column_names, dtypes = _unpack_schema(columns)
         schema_overrides = dtypes ? include_unknowns(dtypes, column_names) : nil
-        rbdf = RbDataFrame.read_hashes(data, infer_schema_length, schema_overrides)
+        rbdf = RbDataFrame.from_hashes(data, schema, schema_overrides, strict, infer_schema_length)
         if column_names
           rbdf = _post_apply_columns(rbdf, column_names)
         end
         return rbdf
       elsif data[0].is_a?(::Array)
+        first_element = data[0]
         if orient.nil? && !columns.nil?
-          first_element = data[0]
           row_types = first_element.filter_map { |value| value.class }.uniq
           if row_types.include?(Integer) && row_types.include?(Float)
             row_types.delete(Integer)
@@ -5057,7 +5395,7 @@ module Polars
             schema, schema_overrides: schema_overrides, n_expected: first_element.length
           )
           local_schema_override = (
-            schema_overrides.any? ? (raise Todo) : {}
+            schema_overrides.any? ? _include_unknowns(schema_overrides, column_names) : {}
           )
           if column_names.any? && first_element.length > 0 && first_element.length != column_names.length
             raise ArgumentError, "the row data does not match the number of columns"
@@ -5065,13 +5403,17 @@ module Polars
 
           unpack_nested = false
           local_schema_override.each do |col, tp|
-            raise Todo
+            if [Categorical, Enum].include?(tp)
+              local_schema_override[col] = String
+            elsif !unpack_nested && [Unknown, Struct].include?(tp.base_type)
+              raise Todo
+            end
           end
 
           if unpack_nested
             raise Todo
           else
-            rbdf = RbDataFrame.read_rows(
+            rbdf = RbDataFrame.from_rows(
               data,
               infer_schema_length,
               local_schema_override.any? ? local_schema_override : nil
@@ -5079,7 +5421,7 @@ module Polars
           end
           if column_names.any? || schema_overrides.any?
             rbdf = _post_apply_columns(
-              rbdf, column_names, schema_overrides: schema_overrides
+              rbdf, column_names, schema_overrides: schema_overrides, strict: strict
             )
           end
           return rbdf
@@ -5089,7 +5431,7 @@ module Polars
           )
           data_series =
             data.map.with_index do |element, i|
-              Series.new(column_names[i], element, dtype: schema_overrides[column_names[i]])._s
+              Series.new(column_names[i], element, dtype: schema_overrides[column_names[i]], strict: strict)._s
             end
           return RbDataFrame.new(data_series)
         else
@@ -5102,7 +5444,12 @@ module Polars
     end
 
     # @private
-    def self.series_to_rbdf(data, schema: nil, schema_overrides: nil)
+    def self._include_unknowns(schema, cols)
+      cols.to_h { |col| [col, schema[col] || Unknown] }
+    end
+
+    # @private
+    def self.series_to_rbdf(data, schema: nil, schema_overrides: nil, strict: true)
       data_series = [data._s]
       series_name = data_series.map(&:name)
       column_names, schema_overrides = _unpack_schema(
@@ -5111,7 +5458,7 @@ module Polars
       if schema_overrides.any?
         new_dtype = schema_overrides.values[0]
         if new_dtype != data.dtype
-          data_series[0] = data_series[0].cast(new_dtype, true)
+          data_series[0] = data_series[0].cast(new_dtype, strict)
         end
       end
 

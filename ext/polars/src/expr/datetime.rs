@@ -13,12 +13,13 @@ impl RbExpr {
     }
 
     pub fn dt_epoch_seconds(&self) -> Self {
-        self.clone()
-            .inner
+        self.inner
+            .clone()
             .map(
                 |s| {
-                    s.timestamp(TimeUnit::Milliseconds)
-                        .map(|ca| Some((ca / 1000).into_series()))
+                    s.take_materialized_series()
+                        .timestamp(TimeUnit::Milliseconds)
+                        .map(|ca| Some((ca / 1000).into_column()))
                 },
                 GetOutput::from_type(DataType::Int64),
             )
@@ -29,28 +30,37 @@ impl RbExpr {
         self.inner.clone().dt().with_time_unit(tu.0).into()
     }
 
-    pub fn dt_convert_time_zone(&self, tz: TimeZone) -> Self {
-        self.inner.clone().dt().convert_time_zone(tz).into()
+    pub fn dt_convert_time_zone(&self, time_zone: String) -> Self {
+        self.inner
+            .clone()
+            .dt()
+            .convert_time_zone(time_zone.into())
+            .into()
     }
 
     pub fn dt_cast_time_unit(&self, tu: Wrap<TimeUnit>) -> Self {
         self.inner.clone().dt().cast_time_unit(tu.0).into()
     }
 
-    pub fn dt_replace_time_zone(&self, time_zone: Option<String>, ambiguous: &Self) -> Self {
+    pub fn dt_replace_time_zone(
+        &self,
+        time_zone: Option<String>,
+        ambiguous: &Self,
+        non_existent: Wrap<NonExistent>,
+    ) -> Self {
         self.inner
             .clone()
             .dt()
-            .replace_time_zone(time_zone, ambiguous.inner.clone())
+            .replace_time_zone(
+                time_zone.map(|x| x.into()),
+                ambiguous.inner.clone(),
+                non_existent.0,
+            )
             .into()
     }
 
-    pub fn dt_truncate(&self, every: &Self, offset: String, ambiguous: &Self) -> Self {
-        self.inner
-            .clone()
-            .dt()
-            .truncate(every.inner.clone(), offset, ambiguous.inner.clone())
-            .into()
+    pub fn dt_truncate(&self, every: &Self) -> Self {
+        self.inner.clone().dt().truncate(every.inner.clone()).into()
     }
 
     pub fn dt_month_start(&self) -> Self {
@@ -61,12 +71,16 @@ impl RbExpr {
         self.inner.clone().dt().month_end().into()
     }
 
-    pub fn dt_round(&self, every: String, offset: String, ambiguous: &Self) -> Self {
-        self.inner
-            .clone()
-            .dt()
-            .round(&every, &offset, ambiguous.inner.clone())
-            .into()
+    pub fn dt_base_utc_offset(&self) -> Self {
+        self.inner.clone().dt().base_utc_offset().into()
+    }
+
+    pub fn dt_dst_offset(&self) -> Self {
+        self.inner.clone().dt().dst_offset().into()
+    }
+
+    pub fn dt_round(&self, every: &Self) -> Self {
+        self.inner.clone().dt().round(every.inner.clone()).into()
     }
 
     pub fn dt_combine(&self, time: &Self, time_unit: Wrap<TimeUnit>) -> Self {
@@ -153,73 +167,31 @@ impl RbExpr {
         self.inner.clone().dt().timestamp(tu.0).into()
     }
 
-    pub fn duration_days(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.days().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_days(&self) -> Self {
+        self.inner.clone().dt().total_days().into()
     }
 
-    pub fn duration_hours(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.hours().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_hours(&self) -> Self {
+        self.inner.clone().dt().total_hours().into()
     }
 
-    pub fn duration_minutes(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.minutes().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_minutes(&self) -> Self {
+        self.inner.clone().dt().total_minutes().into()
     }
 
-    pub fn duration_seconds(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.seconds().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_seconds(&self) -> Self {
+        self.inner.clone().dt().total_seconds().into()
     }
 
-    pub fn duration_milliseconds(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.milliseconds().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_milliseconds(&self) -> Self {
+        self.inner.clone().dt().total_milliseconds().into()
     }
 
-    pub fn duration_microseconds(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.microseconds().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_microseconds(&self) -> Self {
+        self.inner.clone().dt().total_microseconds().into()
     }
 
-    pub fn duration_nanoseconds(&self) -> Self {
-        self.inner
-            .clone()
-            .map(
-                |s| Ok(Some(s.duration()?.nanoseconds().into_series())),
-                GetOutput::from_type(DataType::Int64),
-            )
-            .into()
+    pub fn dt_total_nanoseconds(&self) -> Self {
+        self.inner.clone().dt().total_nanoseconds().into()
     }
 }

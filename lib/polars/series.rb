@@ -34,7 +34,7 @@ module Polars
     #   s3 = Polars::Series.new([1, 2, 3])
     def initialize(name = nil, values = nil, dtype: nil, strict: true, nan_to_null: false, dtype_if_empty: nil)
       # Handle case where values are passed as the first argument
-      if !name.nil? && !name.is_a?(String)
+      if !name.nil? && !name.is_a?(::String)
         if values.nil?
           values = name
           name = nil
@@ -46,7 +46,7 @@ module Polars
       name = "" if name.nil?
 
       # TODO improve
-      if values.is_a?(Range) && values.begin.is_a?(String)
+      if values.is_a?(Range) && values.begin.is_a?(::String)
         values = values.to_a
       end
 
@@ -88,6 +88,11 @@ module Polars
     # Get the data type of this Series.
     #
     # @return [Symbol]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.dtype
+    #   # => Polars::Int64
     def dtype
       _s.dtype
     end
@@ -95,6 +100,11 @@ module Polars
     # Get flags that are set on the Series.
     #
     # @return [Hash]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.flags
+    #   # => {"SORTED_ASC"=>false, "SORTED_DESC"=>false}
     def flags
       out = {
         "SORTED_ASC" => _s.is_sorted_flag,
@@ -106,16 +116,14 @@ module Polars
       out
     end
 
-    # Get the inner dtype in of a List typed Series.
-    #
-    # @return [Symbol]
-    def inner_dtype
-      _s.inner_dtype
-    end
-
     # Get the name of this Series.
     #
     # @return [String]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.name
+    #   # => "a"
     def name
       _s.name
     end
@@ -123,15 +131,13 @@ module Polars
     # Shape of this Series.
     #
     # @return [Array]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.shape
+    #   # => [3]
     def shape
       [_s.len]
-    end
-
-    # Get the time unit of underlying Datetime Series as `"ns"`, `"us"`, or `"ms"`.
-    #
-    # @return [String]
-    def time_unit
-      _s.time_unit
     end
 
     # Returns a string representing the Series.
@@ -212,6 +218,126 @@ module Polars
     # @return [Series]
     def <=(other)
       _comp(other, :lt_eq)
+    end
+
+    # Method equivalent of operator expression `series <= other`.
+    #
+    # @return [Series]
+    def le(other)
+      self <= other
+    end
+
+    # Method equivalent of operator expression `series < other`.
+    #
+    # @return [Series]
+    def lt(other)
+      self < other
+    end
+
+    # Method equivalent of operator expression `series == other`.
+    #
+    # @return [Series]
+    def eq(other)
+      self == other
+    end
+
+    # Method equivalent of equality operator `series == other` where `nil == nil`.
+    #
+    # This differs from the standard `ne` where null values are propagated.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Object]
+    #
+    # @example
+    #   s1 = Polars::Series.new("a", [333, 200, nil])
+    #   s2 = Polars::Series.new("a", [100, 200, nil])
+    #   s1.eq(s2)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [bool]
+    #   # [
+    #   #         false
+    #   #         true
+    #   #         null
+    #   # ]
+    #
+    # @example
+    #   s1.eq_missing(s2)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [bool]
+    #   # [
+    #   #         false
+    #   #         true
+    #   #         true
+    #   # ]
+    def eq_missing(other)
+      if other.is_a?(Expr)
+        return Polars.lit(self).eq_missing(other)
+      end
+      to_frame.select(Polars.col(name).eq_missing(other)).to_series
+    end
+
+    # Method equivalent of operator expression `series != other`.
+    #
+    # @return [Series]
+    def ne(other)
+      self != other
+    end
+
+    # Method equivalent of equality operator `series != other` where `None == None`.
+    #
+    # This differs from the standard `ne` where null values are propagated.
+    #
+    # @param other [Object]
+    #   A literal or expression value to compare with.
+    #
+    # @return [Object]
+    #
+    # @example
+    #   s1 = Polars::Series.new("a", [333, 200, nil])
+    #   s2 = Polars::Series.new("a", [100, 200, nil])
+    #   s1.ne(s2)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [bool]
+    #   # [
+    #   #         true
+    #   #         false
+    #   #         null
+    #   # ]
+    #
+    # @example
+    #   s1.ne_missing(s2)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [bool]
+    #   # [
+    #   #         true
+    #   #         false
+    #   #         false
+    #   # ]
+    def ne_missing(other)
+      if other.is_a?(Expr)
+        return Polars.lit(self).ne_missing(other)
+      end
+      to_frame.select(Polars.col(name).ne_missing(other)).to_series
+    end
+
+    # Method equivalent of operator expression `series >= other`.
+    #
+    # @return [Series]
+    def ge(other)
+      self >= other
+    end
+
+    # Method equivalent of operator expression `series > other`.
+    #
+    # @return [Series]
+    def gt(other)
+      self > other
     end
 
     # Performs addition.
@@ -341,7 +467,7 @@ module Polars
     def []=(key, value)
       if value.is_a?(::Array)
         if is_numeric || is_datelike
-          set_at_idx(key, value)
+          scatter(key, value)
           return
         end
         raise ArgumentError, "cannot set Series of dtype: #{dtype} with list/tuple as value; use a scalar value"
@@ -351,9 +477,9 @@ module Polars
         if key.dtype == Boolean
           self._s = set(key, value)._s
         elsif key.dtype == UInt64
-          self._s = set_at_idx(key.cast(UInt32), value)._s
+          self._s = scatter(key.cast(UInt32), value)._s
         elsif key.dtype == UInt32
-          self._s = set_at_idx(key, value)._s
+          self._s = scatter(key, value)._s
         else
           raise Todo
         end
@@ -404,6 +530,18 @@ module Polars
     # Compute the square root of the elements.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1, 2, 3])
+    #   s.sqrt
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         1.0
+    #   #         1.414214
+    #   #         1.732051
+    #   # ]
     def sqrt
       self**0.5
     end
@@ -411,11 +549,23 @@ module Polars
     # Check if any boolean value in the column is `true`.
     #
     # @return [Boolean]
-    def any?(&block)
+    #
+    # @example
+    #   Polars::Series.new([true, false]).any?
+    #   # => true
+    #
+    # @example
+    #   Polars::Series.new([false, false]).any?
+    #   # => false
+    #
+    # @example
+    #   Polars::Series.new([nil, false]).any?
+    #   # => false
+    def any?(ignore_nulls: true, &block)
       if block_given?
-        apply(&block).any?
+        apply(skip_nulls: ignore_nulls, &block).any?
       else
-        to_frame.select(Polars.col(name).any).to_series[0]
+        _s.any(ignore_nulls)
       end
     end
     alias_method :any, :any?
@@ -423,11 +573,23 @@ module Polars
     # Check if all boolean values in the column are `true`.
     #
     # @return [Boolean]
-    def all?(&block)
+    #
+    # @example
+    #   Polars::Series.new([true, true]).all?
+    #   # => true
+    #
+    # @example
+    #   Polars::Series.new([false, true]).all?
+    #   # => false
+    #
+    # @example
+    #   Polars::Series.new([nil, true]).all?
+    #   # => true
+    def all?(ignore_nulls: true, &block)
       if block_given?
-        apply(&block).all?
+        apply(skip_nulls: ignore_nulls, &block).all?
       else
-        to_frame.select(Polars.col(name).all).to_series[0]
+        _s.all(ignore_nulls)
       end
     end
     alias_method :all, :all?
@@ -435,6 +597,18 @@ module Polars
     # Check if all boolean values in the column are `false`.
     #
     # @return [Boolean]
+    #
+    # @example
+    #   Polars::Series.new([true, false]).none?
+    #   # => false
+    #
+    # @example
+    #   Polars::Series.new([false, false]).none?
+    #   # => true
+    #
+    # @example
+    #   Polars::Series.new([nil, false]).none?
+    #   # => true
     def none?(&block)
       if block_given?
         apply(&block).none?
@@ -450,6 +624,18 @@ module Polars
     #   Given base, defaults to `Math::E`.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1, 2, 3])
+    #   s.log
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         0.0
+    #   #         0.693147
+    #   #         1.098612
+    #   # ]
     def log(base = Math::E)
       super
     end
@@ -457,6 +643,18 @@ module Polars
     # Compute the base 10 logarithm of the input array, element-wise.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([10, 100, 1000])
+    #   s.log10
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         1.0
+    #   #         2.0
+    #   #         3.0
+    #   # ]
     def log10
       super
     end
@@ -464,6 +662,18 @@ module Polars
     # Compute the exponential, element-wise.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1, 2, 3])
+    #   s.exp
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         2.718282
+    #   #         7.389056
+    #   #         20.085537
+    #   # ]
     def exp
       super
     end
@@ -471,6 +681,18 @@ module Polars
     # Create a new Series that copies data from this Series without null values.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1.0, nil, 3.0, Float::NAN])
+    #   s.drop_nulls
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         1.0
+    #   #         3.0
+    #   #         NaN
+    #   # ]
     def drop_nulls
       super
     end
@@ -478,6 +700,18 @@ module Polars
     # Drop NaN values.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1.0, nil, 3.0, Float::NAN])
+    #   s.drop_nans
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         1.0
+    #   #         null
+    #   #         3.0
+    #   # ]
     def drop_nans
       super
     end
@@ -485,7 +719,37 @@ module Polars
     # Cast this Series to a DataFrame.
     #
     # @return [DataFrame]
-    def to_frame
+    #
+    # @example
+    #   s = Polars::Series.new("a", [123, 456])
+    #   s.to_frame
+    #   # =>
+    #   # shape: (2, 1)
+    #   # ┌─────┐
+    #   # │ a   │
+    #   # │ --- │
+    #   # │ i64 │
+    #   # ╞═════╡
+    #   # │ 123 │
+    #   # │ 456 │
+    #   # └─────┘
+    #
+    # @example
+    #   s.to_frame("xyz")
+    #   # =>
+    #   # shape: (2, 1)
+    #   # ┌─────┐
+    #   # │ xyz │
+    #   # │ --- │
+    #   # │ i64 │
+    #   # ╞═════╡
+    #   # │ 123 │
+    #   # │ 456 │
+    #   # └─────┘
+    def to_frame(name = nil)
+      if name
+        return Utils.wrap_df(RbDataFrame.new([rename(name)._s]))
+      end
       Utils.wrap_df(RbDataFrame.new([_s]))
     end
 
@@ -602,6 +866,11 @@ module Polars
     # Reduce this Series to the product value.
     #
     # @return [Numeric]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.product
+    #   # => 6
     def product
       to_frame.select(Polars.col(name).product).to_series[0]
     end
@@ -633,15 +902,35 @@ module Polars
     # Get maximum value, but propagate/poison encountered NaN values.
     #
     # @return [Object]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 3, 4])
+    #   s.nan_max
+    #   # => 4
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1.0, Float::NAN, 4.0])
+    #   s.nan_max
+    #   # => NaN
     def nan_max
-      to_frame.select(Polars.col(name).nan_max)[0, 0]
+      to_frame.select(F.col(name).nan_max)[0, 0]
     end
 
     # Get minimum value, but propagate/poison encountered NaN values.
     #
     # @return [Object]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 3, 4])
+    #   s.nan_min
+    #   # => 1
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1.0, Float::NAN, 4.0])
+    #   s.nan_min
+    #   # => NaN
     def nan_min
-      to_frame.select(Polars.col(name).nan_min)[0, 0]
+      to_frame.select(F.col(name).nan_min)[0, 0]
     end
 
     # Get the standard deviation of this Series.
@@ -735,6 +1024,212 @@ module Polars
       Utils.wrap_df(_s.to_dummies(separator, drop_first))
     end
 
+    # Bin continuous values into discrete categories.
+    #
+    # @param breaks [Array]
+    #   List of unique cut points.
+    # @param labels [Array]
+    #   Names of the categories. The number of labels must be equal to the number
+    #   of cut points plus one.
+    # @param left_closed [Boolean]
+    #   Set the intervals to be left-closed instead of right-closed.
+    # @param include_breaks [Boolean]
+    #   Include a column with the right endpoint of the bin each observation falls
+    #   in. This will change the data type of the output from a
+    #   `Categorical` to a `Struct`.
+    #
+    # @return [Series]
+    #
+    # @example Divide the column into three categories.
+    #   s = Polars::Series.new("foo", [-2, -1, 0, 1, 2])
+    #   s.cut([-1, 1], labels: ["a", "b", "c"])
+    #   # =>
+    #   # shape: (5,)
+    #   # Series: 'foo' [cat]
+    #   # [
+    #   #         "a"
+    #   #         "a"
+    #   #         "b"
+    #   #         "b"
+    #   #         "c"
+    #   # ]
+    #
+    # @example Create a DataFrame with the breakpoint and category for each value.
+    #   cut = s.cut([-1, 1], include_breaks: true).alias("cut")
+    #   s.to_frame.with_columns(cut).unnest("cut")
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬─────────────┬────────────┐
+    #   # │ foo ┆ break_point ┆ category   │
+    #   # │ --- ┆ ---         ┆ ---        │
+    #   # │ i64 ┆ f64         ┆ cat        │
+    #   # ╞═════╪═════════════╪════════════╡
+    #   # │ -2  ┆ -1.0        ┆ (-inf, -1] │
+    #   # │ -1  ┆ -1.0        ┆ (-inf, -1] │
+    #   # │ 0   ┆ 1.0         ┆ (-1, 1]    │
+    #   # │ 1   ┆ 1.0         ┆ (-1, 1]    │
+    #   # │ 2   ┆ inf         ┆ (1, inf]   │
+    #   # └─────┴─────────────┴────────────┘
+    def cut(breaks, labels: nil, left_closed: false, include_breaks: false)
+      result = (
+        to_frame
+        .select(
+          Polars.col(name).cut(
+            breaks,
+            labels: labels,
+            left_closed: left_closed,
+            include_breaks: include_breaks
+          )
+        )
+        .to_series
+      )
+
+      if include_breaks
+        result = result.struct.rename_fields(["break_point", "category"])
+      end
+
+      result
+    end
+
+    # Bin continuous values into discrete categories based on their quantiles.
+    #
+    # @param quantiles [Array]
+    #   Either a list of quantile probabilities between 0 and 1 or a positive
+    #   integer determining the number of bins with uniform probability.
+    # @param labels [Array]
+    #   Names of the categories. The number of labels must be equal to the number
+    #   of cut points plus one.
+    # @param left_closed [Boolean]
+    #   Set the intervals to be left-closed instead of right-closed.
+    # @param allow_duplicates [Boolean]
+    #   If set to `true`, duplicates in the resulting quantiles are dropped,
+    #   rather than raising a `DuplicateError`. This can happen even with unique
+    #   probabilities, depending on the data.
+    # @param include_breaks [Boolean]
+    #   Include a column with the right endpoint of the bin each observation falls
+    #   in. This will change the data type of the output from a
+    #   `Categorical` to a `Struct`.
+    #
+    # @return [Series]
+    #
+    # @example Divide a column into three categories according to pre-defined quantile probabilities.
+    #   s = Polars::Series.new("foo", [-2, -1, 0, 1, 2])
+    #   s.qcut([0.25, 0.75], labels: ["a", "b", "c"])
+    #   # =>
+    #   # shape: (5,)
+    #   # Series: 'foo' [cat]
+    #   # [
+    #   #         "a"
+    #   #         "a"
+    #   #         "b"
+    #   #         "b"
+    #   #         "c"
+    #   # ]
+    #
+    # @example Divide a column into two categories using uniform quantile probabilities.
+    #   s.qcut(2, labels: ["low", "high"], left_closed: true)
+    #   # =>
+    #   # shape: (5,)
+    #   # Series: 'foo' [cat]
+    #   # [
+    #   #         "low"
+    #   #         "low"
+    #   #         "high"
+    #   #         "high"
+    #   #         "high"
+    #   # ]
+    #
+    # @example Create a DataFrame with the breakpoint and category for each value.
+    #   cut = s.qcut([0.25, 0.75], include_breaks: true).alias("cut")
+    #   s.to_frame.with_columns(cut).unnest("cut")
+    #   # =>
+    #   # shape: (5, 3)
+    #   # ┌─────┬─────────────┬────────────┐
+    #   # │ foo ┆ break_point ┆ category   │
+    #   # │ --- ┆ ---         ┆ ---        │
+    #   # │ i64 ┆ f64         ┆ cat        │
+    #   # ╞═════╪═════════════╪════════════╡
+    #   # │ -2  ┆ -1.0        ┆ (-inf, -1] │
+    #   # │ -1  ┆ -1.0        ┆ (-inf, -1] │
+    #   # │ 0   ┆ 1.0         ┆ (-1, 1]    │
+    #   # │ 1   ┆ 1.0         ┆ (-1, 1]    │
+    #   # │ 2   ┆ inf         ┆ (1, inf]   │
+    #   # └─────┴─────────────┴────────────┘
+    def qcut(quantiles, labels: nil, left_closed: false, allow_duplicates: false, include_breaks: false)
+      result = (
+        to_frame
+        .select(
+          Polars.col(name).qcut(
+            quantiles,
+            labels: labels,
+            left_closed: left_closed,
+            allow_duplicates: allow_duplicates,
+            include_breaks: include_breaks
+          )
+        )
+        .to_series
+      )
+
+      if include_breaks
+        result = result.struct.rename_fields(["break_point", "category"])
+      end
+
+      result
+    end
+
+    # Get the lengths of runs of identical values.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("s", [1, 1, 2, 1, nil, 1, 3, 3])
+    #   s.rle.struct.unnest
+    #   # =>
+    #   # shape: (6, 2)
+    #   # ┌─────┬───────┐
+    #   # │ len ┆ value │
+    #   # │ --- ┆ ---   │
+    #   # │ u32 ┆ i64   │
+    #   # ╞═════╪═══════╡
+    #   # │ 2   ┆ 1     │
+    #   # │ 1   ┆ 2     │
+    #   # │ 1   ┆ 1     │
+    #   # │ 1   ┆ null  │
+    #   # │ 1   ┆ 1     │
+    #   # │ 2   ┆ 3     │
+    #   # └─────┴───────┘
+    def rle
+      super
+    end
+
+    # Map values to run IDs.
+    #
+    # Similar to RLE, but it maps each value to an ID corresponding to the run into
+    # which it falls. This is especially useful when you want to define groups by
+    # runs of identical values rather than the values themselves.
+    #
+    # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("s", [1, 1, 2, 1, nil, 1, 3, 3])
+    #   s.rle_id
+    #   # =>
+    #   # shape: (8,)
+    #   # Series: 's' [u32]
+    #   # [
+    #   #         0
+    #   #         0
+    #   #         1
+    #   #         2
+    #   #         3
+    #   #         4
+    #   #         5
+    #   #         5
+    #   # ]
+    def rle_id
+      super
+    end
+
     # Count the unique values in a Series.
     #
     # @param sort [Boolean]
@@ -756,8 +1251,24 @@ module Polars
     #   # │ 2   ┆ 2      │
     #   # │ 3   ┆ 1      │
     #   # └─────┴────────┘
-    def value_counts(sort: false)
-      Utils.wrap_df(_s.value_counts(sort))
+    def value_counts(
+      sort: false,
+      parallel: false,
+      name: nil,
+      normalize: false
+    )
+      if name.nil?
+        if normalize
+          name = "proportion"
+        else
+          name = "count"
+        end
+      end
+      DataFrame._from_rbdf(
+        self._s.value_counts(
+          sort, parallel, name, normalize
+        )
+      )
     end
 
     # Return a count of the unique values in the order of appearance.
@@ -829,13 +1340,13 @@ module Polars
     #   s.cumulative_eval(Polars.element.first - Polars.element.last ** 2)
     #   # =>
     #   # shape: (5,)
-    #   # Series: 'values' [f64]
+    #   # Series: 'values' [i64]
     #   # [
-    #   #         0.0
-    #   #         -3.0
-    #   #         -8.0
-    #   #         -15.0
-    #   #         -24.0
+    #   #         0
+    #   #         -3
+    #   #         -8
+    #   #         -15
+    #   #         -24
     #   # ]
     def cumulative_eval(expr, min_periods: 1, parallel: false)
       super
@@ -929,7 +1440,7 @@ module Polars
     #
     # @example
     #   s = Polars::Series.new("a", [1, 2, 3])
-    #   s.cumsum
+    #   s.cum_sum
     #   # =>
     #   # shape: (3,)
     #   # Series: 'a' [i64]
@@ -938,9 +1449,10 @@ module Polars
     #   #         3
     #   #         6
     #   # ]
-    def cumsum(reverse: false)
+    def cum_sum(reverse: false)
       super
     end
+    alias_method :cumsum, :cum_sum
 
     # Get an array with the cumulative min computed at every element.
     #
@@ -951,7 +1463,7 @@ module Polars
     #
     # @example
     #   s = Polars::Series.new("a", [3, 5, 1])
-    #   s.cummin
+    #   s.cum_min
     #   # =>
     #   # shape: (3,)
     #   # Series: 'a' [i64]
@@ -960,9 +1472,10 @@ module Polars
     #   #         3
     #   #         1
     #   # ]
-    def cummin(reverse: false)
+    def cum_min(reverse: false)
       super
     end
+    alias_method :cummin, :cum_min
 
     # Get an array with the cumulative max computed at every element.
     #
@@ -973,7 +1486,7 @@ module Polars
     #
     # @example
     #   s = Polars::Series.new("a", [3, 5, 1])
-    #   s.cummax
+    #   s.cum_max
     #   # =>
     #   # shape: (3,)
     #   # Series: 'a' [i64]
@@ -982,9 +1495,10 @@ module Polars
     #   #         5
     #   #         5
     #   # ]
-    def cummax(reverse: false)
+    def cum_max(reverse: false)
       super
     end
+    alias_method :cummax, :cum_max
 
     # Get an array with the cumulative product computed at every element.
     #
@@ -999,7 +1513,7 @@ module Polars
     #
     # @example
     #   s = Polars::Series.new("a", [1, 2, 3])
-    #   s.cumprod
+    #   s.cum_prod
     #   # =>
     #   # shape: (3,)
     #   # Series: 'a' [i64]
@@ -1008,9 +1522,10 @@ module Polars
     #   #         2
     #   #         6
     #   # ]
-    def cumprod(reverse: false)
+    def cum_prod(reverse: false)
       super
     end
+    alias_method :cumprod, :cum_prod
 
     # Get the first `n` rows.
     #
@@ -1032,7 +1547,7 @@ module Polars
     #   #         2
     #   # ]
     def limit(n = 10)
-      to_frame.select(Utils.col(name).limit(n)).to_series
+      to_frame.select(F.col(name).limit(n)).to_series
     end
 
     # Get a slice of this Series.
@@ -1056,7 +1571,7 @@ module Polars
     #   #         3
     #   # ]
     def slice(offset, length = nil)
-      super
+      self.class._from_rbseries(_s.slice(offset, length))
     end
 
     # Append a Series to this one.
@@ -1164,7 +1679,7 @@ module Polars
     #   #         2
     #   # ]
     def head(n = 10)
-      to_frame.select(Utils.col(name).head(n)).to_series
+      to_frame.select(F.col(name).head(n)).to_series
     end
 
     # Get the last `n` rows.
@@ -1185,7 +1700,7 @@ module Polars
     #   #         3
     #   # ]
     def tail(n = 10)
-      to_frame.select(Utils.col(name).tail(n)).to_series
+      to_frame.select(F.col(name).tail(n)).to_series
     end
 
     # Take every nth value in the Series and return as new Series.
@@ -1237,26 +1752,56 @@ module Polars
     #   #         2
     #   #         1
     #   # ]
-    def sort(reverse: false, in_place: false)
+    def sort(reverse: false, nulls_last: false, multithreaded: true, in_place: false)
       if in_place
-        self._s = _s.sort(reverse)
+        self._s = _s.sort(reverse, nulls_last, multithreaded)
         self
       else
-        Utils.wrap_s(_s.sort(reverse))
+        Utils.wrap_s(_s.sort(reverse, nulls_last, multithreaded))
       end
     end
 
     # Return the `k` largest elements.
     #
-    # If `reverse: true`, the smallest elements will be given.
+    # @param k [Integer]
+    #   Number of elements to return.
+    #
+    # @return [Boolean]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [2, 5, 1, 4, 3])
+    #   s.top_k(k: 3)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         5
+    #   #         4
+    #   #         3
+    #   # ]
+    def top_k(k: 5)
+      super
+    end
+
+    # Return the `k` smallest elements.
     #
     # @param k [Integer]
     #   Number of elements to return.
-    # @param reverse [Boolean]
-    #   Return the smallest elements.
     #
     # @return [Boolean]
-    def top_k(k: 5, reverse: false)
+    #
+    # @example
+    #   s = Polars::Series.new("a", [2, 5, 1, 4, 3])
+    #   s.bottom_k(k: 3)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   # ]
+    def bottom_k(k: 5)
       super
     end
 
@@ -1285,20 +1830,7 @@ module Polars
     def arg_sort(reverse: false, nulls_last: false)
       super
     end
-
-    # Get the index values that would sort this Series.
-    #
-    # Alias for {#arg_sort}.
-    #
-    # @param reverse [Boolean]
-    #   Sort in reverse (descending) order.
-    # @param nulls_last [Boolean]
-    #   Place null values last instead of first.
-    #
-    # @return [Series]
-    def argsort(reverse: false, nulls_last: false)
-      super
-    end
+    alias_method :argsort, :arg_sort
 
     # Get unique index as Series.
     #
@@ -1349,6 +1881,52 @@ module Polars
     #   Expression or scalar value.
     #
     # @return [Integer]
+    #
+    # @example
+    #   s = Polars::Series.new("set", [1, 2, 3, 4, 4, 5, 6, 7])
+    #   s.search_sorted(4)
+    #   # => 3
+    #
+    # @example
+    #   s.search_sorted(4, side: "left")
+    #   # => 3
+    #
+    # @example
+    #   s.search_sorted(4, side: "right")
+    #   # => 5
+    #
+    # @example
+    #   s.search_sorted([1, 4, 5])
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'set' [u32]
+    #   # [
+    #   #         0
+    #   #         3
+    #   #         5
+    #   # ]
+    #
+    # @example
+    #   s.search_sorted([1, 4, 5], side: "left")
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'set' [u32]
+    #   # [
+    #   #         0
+    #   #         3
+    #   #         5
+    #   # ]
+    #
+    # @example
+    #   s.search_sorted([1, 4, 5], side: "right")
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'set' [u32]
+    #   # [
+    #   #         1
+    #   #         5
+    #   #         6
+    #   # ]
     def search_sorted(element, side: "any")
       if element.is_a?(Integer) || element.is_a?(Float)
         return Polars.select(Polars.lit(self).search_sorted(element, side: side)).item
@@ -1404,6 +1982,11 @@ module Polars
     # Count the null values in this Series.
     #
     # @return [Integer]
+    #
+    # @example
+    #   s = Polars::Series.new([1, nil, nil])
+    #   s.null_count
+    #   # => 2
     def null_count
       _s.null_count
     end
@@ -1414,9 +1997,19 @@ module Polars
     # Use this to swiftly assert a Series does not have null values.
     #
     # @return [Boolean]
-    def has_validity
-      _s.has_validity
+    #
+    # @example
+    #   s = Polars::Series.new([1, 2, nil])
+    #   s.has_nulls
+    #   # => true
+    #
+    # @example
+    #   s[...2].has_nulls
+    #   # => false
+    def has_nulls
+      _s.has_nulls
     end
+    alias_method :has_validity, :has_nulls
 
     # Check if the Series is empty.
     #
@@ -1642,9 +2235,24 @@ module Polars
     # Get a mask of the first unique value.
     #
     # @return [Series]
-    def is_first
+    #
+    # @example
+    #   s = Polars::Series.new([1, 1, 2, 3, 2])
+    #   s.is_first_distinct
+    #   # =>
+    #   # shape: (5,)
+    #   # Series: '' [bool]
+    #   # [
+    #   #         true
+    #   #         false
+    #   #         true
+    #   #         true
+    #   #         false
+    #   # ]
+    def is_first_distinct
       super
     end
+    alias_method :is_first, :is_first_distinct
 
     # Get mask of all duplicated values.
     #
@@ -1694,37 +2302,50 @@ module Polars
     #
     # @param other [Series]
     #   Series to compare with.
+    # @param strict [Boolean]
+    #   Require data types to match.
+    # @param check_names [Boolean]
+    #   Require names to match.
     # @param null_equal [Boolean]
     #   Consider null values as equal.
-    # @param strict [Boolean]
-    #   Don't allow different numerical dtypes, e.g. comparing `:u32` with a
-    #   `:i64` will return `false`.
     #
     # @return [Boolean]
     #
     # @example
     #   s = Polars::Series.new("a", [1, 2, 3])
     #   s2 = Polars::Series.new("b", [4, 5, 6])
-    #   s.series_equal(s)
+    #   s.equals(s)
     #   # => true
-    #   s.series_equal(s2)
+    #   s.equals(s2)
     #   # => false
-    def series_equal(other, null_equal: false, strict: false)
-      _s.series_equal(other._s, null_equal, strict)
+    def equals(other, strict: false, check_names: false, null_equal: false)
+      _s.equals(other._s, strict, check_names, null_equal)
     end
+    alias_method :series_equal, :equals
 
-    # Length of this Series.
+    # Return the number of elements in the Series.
     #
     # @return [Integer]
     #
     # @example
-    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s = Polars::Series.new("a", [1, 2, nil])
+    #   s.count
+    #   # => 2
+    def count
+      len - null_count
+    end
+
+    # Return the number of elements in the Series.
+    #
+    # @return [Integer]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, nil])
     #   s.len
     #   # => 3
     def len
       _s.len
     end
-    alias_method :count, :len
     alias_method :length, :len
     alias_method :size, :len
 
@@ -1797,6 +2418,35 @@ module Polars
     #   In place or not.
     #
     # @return [Series]
+    #
+    # @example
+    #   s1 = Polars::Series.new("a", [1, 2, 3])
+    #   s1.n_chunks
+    #   # => 1
+    #
+    # @example
+    #   s2 = Polars::Series.new("a", [4, 5, 6])
+    #   s = Polars.concat([s1, s2], rechunk: false)
+    #   s.n_chunks
+    #   # => 2
+    #
+    # @example
+    #   s.rechunk(in_place: true)
+    #   # =>
+    #   # shape: (6,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   #         4
+    #   #         5
+    #   #         6
+    #   # ]
+    #
+    # @example
+    #   s.n_chunks
+    #   # => 1
     def rechunk(in_place: false)
       opt_s = _s.rechunk(in_place)
       in_place ? self : Utils.wrap_s(opt_s)
@@ -1886,7 +2536,7 @@ module Polars
     #   s.is_utf8
     #   # => true
     def is_utf8
-      dtype == Utf8
+      dtype == String
     end
     alias_method :utf8?, :is_utf8
 
@@ -1920,7 +2570,7 @@ module Polars
             Int64 => Numo::Int64,
             Float32 => Numo::SFloat,
             Float64 => Numo::DFloat
-          }.fetch(dtype).cast(to_a)
+          }.fetch(dtype.class).cast(to_a)
         elsif is_boolean
           Numo::Bit.cast(to_a)
         else
@@ -1959,7 +2609,7 @@ module Polars
     #   #         3
     #   # ]
     def set(filter, value)
-      Utils.wrap_s(_s.send("set_with_mask_#{DTYPE_TO_FFINAME.fetch(dtype)}", filter._s, value))
+      Utils.wrap_s(_s.send("set_with_mask_#{DTYPE_TO_FFINAME.fetch(dtype.class)}", filter._s, value))
     end
 
     # Set values at the index locations.
@@ -1982,7 +2632,7 @@ module Polars
     #   #         10
     #   #         3
     #   # ]
-    def set_at_idx(idx, value)
+    def scatter(idx, value)
       if idx.is_a?(Integer)
         idx = [idx]
       end
@@ -1991,7 +2641,7 @@ module Polars
       end
 
       idx = Series.new("", idx)
-      if value.is_a?(Integer) || value.is_a?(Float) || Utils.bool?(value) || value.is_a?(String) || value.nil?
+      if value.is_a?(Integer) || value.is_a?(Float) || Utils.bool?(value) || value.is_a?(::String) || value.nil?
         value = Series.new("", [value])
 
         # if we need to set more than a single value, we extend it
@@ -2001,9 +2651,10 @@ module Polars
       elsif !value.is_a?(Series)
         value = Series.new("", value)
       end
-      _s.set_at_idx(idx._s, value._s)
+      _s.scatter(idx._s, value._s)
       self
     end
+    alias_method :set_at_idx, :scatter
 
     # Create an empty copy of the current Series.
     #
@@ -2215,12 +2866,12 @@ module Polars
     #   s.sign
     #   # =>
     #   # shape: (5,)
-    #   # Series: 'a' [i64]
+    #   # Series: 'a' [f64]
     #   # [
-    #   #         -1
-    #   #         0
-    #   #         0
-    #   #         1
+    #   #         -1.0
+    #   #         -0.0
+    #   #         0.0
+    #   #         1.0
     #   #         null
     #   # ]
     def sign
@@ -2484,7 +3135,7 @@ module Polars
     #
     # @example
     #   s = Polars::Series.new("a", [1, 2, 3])
-    #   s.apply { |x| x + 10 }
+    #   s.map_elements { |x| x + 10 }
     #   # =>
     #   # shape: (3,)
     #   # Series: 'a' [i64]
@@ -2493,7 +3144,7 @@ module Polars
     #   #         12
     #   #         13
     #   # ]
-    def apply(return_dtype: nil, skip_nulls: true, &func)
+    def map_elements(return_dtype: nil, skip_nulls: true, &func)
       if return_dtype.nil?
         pl_return_dtype = nil
       else
@@ -2501,7 +3152,8 @@ module Polars
       end
       Utils.wrap_s(_s.apply_lambda(func, pl_return_dtype, skip_nulls))
     end
-    alias_method :map, :apply
+    alias_method :map, :map_elements
+    alias_method :apply, :map_elements
 
     # Shift the values by a given period.
     #
@@ -2630,16 +3282,7 @@ module Polars
       min_periods: nil,
       center: false
     )
-      to_frame
-        .select(
-          Polars.col(name).rolling_min(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center
-          )
-        )
-        .to_series
+      super
     end
 
     # Apply a rolling max (moving max) over the values in this array.
@@ -2680,16 +3323,7 @@ module Polars
       min_periods: nil,
       center: false
     )
-      to_frame
-        .select(
-          Polars.col(name).rolling_max(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center
-          )
-        )
-        .to_series
+      super
     end
 
     # Apply a rolling mean (moving mean) over the values in this array.
@@ -2730,16 +3364,7 @@ module Polars
       min_periods: nil,
       center: false
     )
-      to_frame
-        .select(
-          Polars.col(name).rolling_mean(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center
-          )
-        )
-        .to_series
+      super
     end
 
     # Apply a rolling sum (moving sum) over the values in this array.
@@ -2780,16 +3405,7 @@ module Polars
       min_periods: nil,
       center: false
     )
-      to_frame
-        .select(
-          Polars.col(name).rolling_sum(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center
-          )
-        )
-        .to_series
+      super
     end
 
     # Compute a rolling std dev.
@@ -2832,17 +3448,7 @@ module Polars
       center: false,
       ddof: 1
     )
-      to_frame
-        .select(
-          Polars.col(name).rolling_std(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center,
-            ddof: ddof
-          )
-        )
-        .to_series
+      super
     end
 
     # Compute a rolling variance.
@@ -2885,17 +3491,7 @@ module Polars
       center: false,
       ddof: 1
     )
-      to_frame
-        .select(
-          Polars.col(name).rolling_var(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center,
-            ddof: ddof
-          )
-        )
-        .to_series
+      super
     end
 
     # def rolling_apply
@@ -2936,20 +3532,7 @@ module Polars
       min_periods: nil,
       center: false
     )
-      if min_periods.nil?
-        min_periods = window_size
-      end
-
-      to_frame
-        .select(
-          Polars.col(name).rolling_median(
-            window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center
-          )
-        )
-        .to_series
+      super
     end
 
     # Compute a rolling quantile.
@@ -3007,22 +3590,7 @@ module Polars
       min_periods: nil,
       center: false
     )
-      if min_periods.nil?
-        min_periods = window_size
-      end
-
-      to_frame
-        .select(
-          Polars.col(name).rolling_quantile(
-            quantile,
-            interpolation: interpolation,
-            window_size: window_size,
-            weights: weights,
-            min_periods: min_periods,
-            center: center
-          )
-        )
-        .to_series
+      super
     end
 
     # Compute a rolling skew.
@@ -3076,8 +3644,8 @@ module Polars
     #   # shape: (2,)
     #   # Series: 'a' [i64]
     #   # [
-    #   #     1
-    #   #     5
+    #   #         5
+    #   #         3
     #   # ]
     def sample(
       n: nil,
@@ -3210,6 +3778,18 @@ module Polars
     #   If true, reinterpret as `:i64`. Otherwise, reinterpret as `:u64`.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [-(2**60), -2, 3])
+    #   s.reinterpret(signed: false)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [u64]
+    #   # [
+    #   #         17293822569102704640
+    #   #         18446744073709551614
+    #   #         3
+    #   # ]
     def reinterpret(signed: true)
       super
     end
@@ -3238,6 +3818,18 @@ module Polars
     # Compute absolute values.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1, -2, -3])
+    #   s.abs
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   # ]
     def abs
       super
     end
@@ -3264,6 +3856,8 @@ module Polars
     #     on the order that the values occur in the Series.
     # @param reverse [Boolean]
     #   Reverse the operation.
+    # @param seed [Integer]
+    #   If `method: "random"`, use this as seed.
     #
     # @return [Series]
     #
@@ -3294,7 +3888,7 @@ module Polars
     #   #         2
     #   #         5
     #   # ]
-    def rank(method: "average", reverse: false)
+    def rank(method: "average", reverse: false, seed: nil)
       super
     end
 
@@ -3306,6 +3900,44 @@ module Polars
     #   How to handle null values.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("s", [20, 10, 30, 25, 35], dtype: Polars::Int8)
+    #   s.diff
+    #   # =>
+    #   # shape: (5,)
+    #   # Series: 's' [i8]
+    #   # [
+    #   #         null
+    #   #         -10
+    #   #         20
+    #   #         -5
+    #   #         10
+    #   # ]
+    #
+    # @example
+    #   s.diff(n: 2)
+    #   # =>
+    #   # shape: (5,)
+    #   # Series: 's' [i8]
+    #   # [
+    #   #         null
+    #   #         null
+    #   #         10
+    #   #         15
+    #   #         5
+    #   # ]
+    #
+    # @example
+    #   s.diff(n: 2, null_behavior: "drop")
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 's' [i8]
+    #   # [
+    #   #         10
+    #   #         15
+    #   #         5
+    #   # ]
     def diff(n: 1, null_behavior: "ignore")
       super
     end
@@ -3373,6 +4005,11 @@ module Polars
     #   If `false`, the calculations are corrected for statistical bias.
     #
     # @return [Float, nil]
+    #
+    # @example
+    #   s = Polars::Series.new([1, 2, 2, 4, 5])
+    #   s.skew
+    #   # => 0.34776706224699483
     def skew(bias: true)
       _s.skew(bias)
     end
@@ -3392,6 +4029,19 @@ module Polars
     #   If `false`, the calculations are corrected for statistical bias.
     #
     # @return [Float, nil]
+    #
+    # @example
+    #   s = Polars::Series.new("grades", [66, 79, 54, 97, 96, 70, 69, 85, 93, 75])
+    #   s.kurtosis
+    #   # => -1.0522623626787952
+    #
+    # @example
+    #   s.kurtosis(fisher: false)
+    #   # => 1.9477376373212048
+    #
+    # @example
+    #   s.kurtosis(fisher: false, bias: false)
+    #   # => 2.1040361802642726
     def kurtosis(fisher: true, bias: true)
       _s.kurtosis(fisher, bias)
     end
@@ -3422,7 +4072,7 @@ module Polars
     #   #         null
     #   #         10
     #   # ]
-    def clip(min_val, max_val)
+    def clip(min_val = nil, max_val = nil)
       super
     end
 
@@ -3456,6 +4106,78 @@ module Polars
       super
     end
 
+    # Replace values by different values.
+    #
+    # @param old [Object]
+    #   Value or sequence of values to replace.
+    #   Also accepts a mapping of values to their replacement.
+    # @param new [Object]
+    #   Value or sequence of values to replace by.
+    #   Length must match the length of `old` or have length 1.
+    # @param default [Object]
+    #   Set values that were not replaced to this value.
+    #   Defaults to keeping the original value.
+    #   Accepts expression input. Non-expression inputs are parsed as literals.
+    # @param return_dtype [Object]
+    #   The data type of the resulting Series. If set to `nil` (default),
+    #   the data type is determined automatically based on the other inputs.
+    #
+    # @return [Series]
+    #
+    # @example Replace a single value by another value. Values that were not replaced remain unchanged.
+    #   s = Polars::Series.new([1, 2, 2, 3])
+    #   s.replace(2, 100)
+    #   # =>
+    #   # shape: (4,)
+    #   # Series: '' [i64]
+    #   # [
+    #   #         1
+    #   #         100
+    #   #         100
+    #   #         3
+    #   # ]
+    #
+    # @example Replace multiple values by passing sequences to the `old` and `new` parameters.
+    #   s.replace([2, 3], [100, 200])
+    #   # =>
+    #   # shape: (4,)
+    #   # Series: '' [i64]
+    #   # [
+    #   #         1
+    #   #         100
+    #   #         100
+    #   #         200
+    #   # ]
+    #
+    # @example Passing a mapping with replacements is also supported as syntactic sugar.
+    #   mapping = {2 => 100, 3 => 200}
+    #   s.replace(mapping)
+    #   # =>
+    #   # shape: (4,)
+    #   # Series: '' [i64]
+    #   # [
+    #   #         1
+    #   #         100
+    #   #         100
+    #   #         200
+    #   # ]
+    #
+    # @example The original data type is preserved when replacing by values of a different data type.
+    #   s = Polars::Series.new(["x", "y", "z"])
+    #   mapping = {"x" => 1, "y" => 2, "z" => 3}
+    #   s.replace(mapping)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [str]
+    #   # [
+    #   #         "1"
+    #   #         "2"
+    #   #         "3"
+    #   # ]
+    def replace(old, new = Expr::NO_DEFAULT, default: Expr::NO_DEFAULT, return_dtype: nil)
+      super
+    end
+
     # Reshape this Series to a flat Series or a Series of Lists.
     #
     # @param dims [Array]
@@ -3463,6 +4185,35 @@ module Polars
     #   dimension is inferred.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("foo", [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    #   square = s.reshape([3, 3])
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'foo' [array[i64, 3]]
+    #   # [
+    #   #         [1, 2, 3]
+    #   #         [4, 5, 6]
+    #   #         [7, 8, 9]
+    #   # ]
+    #
+    # @example
+    #   square.reshape([9])
+    #   # =>
+    #   # shape: (9,)
+    #   # Series: 'foo' [i64]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   #         4
+    #   #         5
+    #   #         6
+    #   #         7
+    #   #         8
+    #   #         9
+    #   # ]
     def reshape(dims)
       super
     end
@@ -3492,13 +4243,26 @@ module Polars
     # Exponentially-weighted moving average.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new([1, 2, 3])
+    #   s.ewm_mean(com: 1, ignore_nulls: false)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: '' [f64]
+    #   # [
+    #   #         1.0
+    #   #         1.666667
+    #   #         2.428571
+    #   # ]
     def ewm_mean(
       com: nil,
       span: nil,
       half_life: nil,
       alpha: nil,
       adjust: true,
-      min_periods: 1
+      min_periods: 1,
+      ignore_nulls: true
     )
       super
     end
@@ -3506,6 +4270,18 @@ module Polars
     # Exponentially-weighted moving standard deviation.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.ewm_std(com: 1, ignore_nulls: false)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [f64]
+    #   # [
+    #   #         0.0
+    #   #         0.707107
+    #   #         0.963624
+    #   # ]
     def ewm_std(
       com: nil,
       span: nil,
@@ -3513,7 +4289,8 @@ module Polars
       alpha: nil,
       adjust: true,
       bias: false,
-      min_periods: 1
+      min_periods: 1,
+      ignore_nulls: true
     )
       super
     end
@@ -3521,6 +4298,18 @@ module Polars
     # Exponentially-weighted moving variance.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3])
+    #   s.ewm_var(com: 1, ignore_nulls: false)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [f64]
+    #   # [
+    #   #         0.0
+    #   #         0.5
+    #   #         0.928571
+    #   # ]
     def ewm_var(
       com: nil,
       span: nil,
@@ -3528,7 +4317,8 @@ module Polars
       alpha: nil,
       adjust: true,
       bias: false,
-      min_periods: 1
+      min_periods: 1,
+      ignore_nulls: true
     )
       super
     end
@@ -3584,6 +4374,18 @@ module Polars
     # Create a new Series filled with values from the given index.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3, 4, 5])
+    #   s.new_from_index(1, 3)
+    #   # =>
+    #   # shape: (3,)
+    #   # Series: 'a' [i64]
+    #   # [
+    #   #         2
+    #   #         2
+    #   #         2
+    #   # ]
     def new_from_index(index, length)
       Utils.wrap_s(_s.new_from_index(index, length))
     end
@@ -3594,6 +4396,21 @@ module Polars
     # This can be used to reduce memory pressure.
     #
     # @return [Series]
+    #
+    # @example
+    #   s = Polars::Series.new("a", [1, 2, 3, 4, 5, 6])
+    #   s.shrink_dtype
+    #   # =>
+    #   # shape: (6,)
+    #   # Series: 'a' [i8]
+    #   # [
+    #   #         1
+    #   #         2
+    #   #         3
+    #   #         4
+    #   #         5
+    #   #         6
+    #   # ]
     def shrink_dtype
       super
     end
@@ -3665,7 +4482,7 @@ module Polars
     end
 
     def _pos_idxs(idxs)
-      idx_type = Polars._get_idx_type
+      idx_type = Plr.get_index_type
 
       if idxs.is_a?(Series)
         if idxs.dtype == idx_type
@@ -3727,12 +4544,12 @@ module Polars
       end
 
       if other.is_a?(::Time) && dtype.is_a?(Datetime)
-        ts = Utils._datetime_to_pl_timestamp(other, time_unit)
+        ts = Utils.datetime_to_int(other, time_unit)
         f = ffi_func("#{op}_<>", Int64, _s)
         fail if f.nil?
         return Utils.wrap_s(f.call(ts))
       elsif other.is_a?(::Date) && dtype == Date
-        d = Utils._date_to_pl_date(other)
+        d = Utils.date_to_int(other)
         f = ffi_func("#{op}_<>", Int32, _s)
         fail if f.nil?
         return Utils.wrap_s(f.call(d))
@@ -3750,7 +4567,7 @@ module Polars
     end
 
     def ffi_func(name, dtype, _s)
-      _s.method(name.sub("<>", DTYPE_TO_FFINAME.fetch(dtype))) if DTYPE_TO_FFINAME.key?(dtype)
+      _s.method(name.sub("<>", DTYPE_TO_FFINAME.fetch(dtype.class))) if DTYPE_TO_FFINAME.key?(dtype.class)
     end
 
     def _arithmetic(other, op)
@@ -3761,7 +4578,7 @@ module Polars
         return Utils.wrap_s(_s.send(op, other._s))
       end
 
-      if (other.is_a?(Float) || other.is_a?(::Date) || other.is_a?(::DateTime) || other.is_a?(::Time) || other.is_a?(String)) && !is_float
+      if (other.is_a?(Float) || other.is_a?(::Date) || other.is_a?(::DateTime) || other.is_a?(::Time) || other.is_a?(::String)) && !is_float
         _s2 = sequence_to_rbseries(name, [other])
         return Utils.wrap_s(_s.send(op, _s2))
       end
@@ -3818,10 +4635,18 @@ module Polars
           # TODO improve performance
           constructor.call(name, values.to_a, strict)
         end
-      elsif values.shape.length == 2
+      elsif values.shape.sum == 0
         raise Todo
       else
-        raise Todo
+        original_shape = values.shape
+        values = values.reshape(original_shape.inject(&:*))
+        rb_s = numo_to_rbseries(
+          name,
+          values,
+          strict: strict,
+          nan_to_null: nan_to_null
+        )
+        Utils.wrap_s(rb_s).reshape(original_shape)._s
       end
     end
 
@@ -3865,21 +4690,34 @@ module Polars
         end
       end
 
-      if !dtype.nil? && ![List, Unknown].include?(dtype) && Utils.is_polars_dtype(dtype) && ruby_dtype.nil?
+      if !dtype.nil? && ![List, Struct, Unknown].include?(dtype) && Utils.is_polars_dtype(dtype) && ruby_dtype.nil?
         if dtype == Array && !dtype.is_a?(Array) && value.is_a?(::Array)
-          dtype = Array.new(value.size)
+          dtype = Array.new(nil, value.size)
         end
 
         constructor = polars_type_to_constructor(dtype)
-        rbseries = constructor.call(name, values, strict)
+        rbseries =
+          if dtype == Array
+            constructor.call(name, values, strict)
+          else
+            construct_series_with_fallbacks(constructor, name, values, dtype, strict: strict)
+          end
 
         base_type = dtype.is_a?(DataType) ? dtype.class : dtype
-        if [Date, Datetime, Duration, Time, Categorical, Boolean].include?(base_type)
+        if [Date, Datetime, Duration, Time, Categorical, Boolean, Enum, Decimal].include?(base_type)
           if rbseries.dtype != dtype
             rbseries = rbseries.cast(dtype, true)
           end
         end
-        return rbseries
+        rbseries
+      elsif dtype == Struct
+        struct_schema = dtype.is_a?(Struct) ? dtype.to_schema : nil
+        empty = {}
+        DataFrame.sequence_to_rbdf(
+          values.map { |v| v.nil? ? empty : v },
+          schema: struct_schema,
+          orient: "row",
+        ).to_struct(name)
       else
         if ruby_dtype.nil?
           if value.nil?
@@ -3900,13 +4738,13 @@ module Polars
           # TODO
           time_unit = nil
 
-          rb_series = RbSeries.new_from_anyvalues(name, values, strict)
+          rb_series = RbSeries.new_from_any_values(name, values, strict)
           if time_unit.nil?
             s = Utils.wrap_s(rb_series)
           else
             s = Utils.wrap_s(rb_series).dt.cast_time_unit(time_unit)
           end
-          return s._s
+          s._s
         elsif defined?(Numo::NArray) && value.is_a?(Numo::NArray) && value.shape.length == 1
           raise Todo
         elsif ruby_dtype == ::Array
@@ -3920,14 +4758,14 @@ module Polars
             end
             return srs
           end
-          return sequence_from_anyvalue_or_object(name, values)
+          sequence_from_anyvalue_or_object(name, values)
         elsif ruby_dtype == Series
-          return RbSeries.new_series_list(name, values.map(&:_s), strict)
+          RbSeries.new_series_list(name, values.map(&:_s), strict)
         elsif ruby_dtype == RbSeries
-          return RbSeries.new_series_list(name, values, strict)
+          RbSeries.new_series_list(name, values, strict)
         else
           constructor =
-            if value.is_a?(String)
+            if value.is_a?(::String)
               if value.encoding == Encoding::UTF_8
                 RbSeries.method(:new_str)
               else
@@ -3939,13 +4777,26 @@ module Polars
             else
               rb_type_to_constructor(value.class)
             end
-          constructor.call(name, values, strict)
+
+          construct_series_with_fallbacks(constructor, name, values, dtype, strict: strict)
+        end
+      end
+    end
+
+    def construct_series_with_fallbacks(constructor, name, values, dtype, strict:)
+      begin
+        constructor.call(name, values, strict)
+      rescue
+        if dtype.nil?
+          RbSeries.new_from_any_values(name, values, strict)
+        else
+          RbSeries.new_from_any_values_and_dtype(name, values, dtype, strict)
         end
       end
     end
 
     def sequence_from_anyvalue_or_object(name, values)
-      RbSeries.new_from_anyvalues(name, values, true)
+      RbSeries.new_from_any_values(name, values, true)
     rescue
       RbSeries.new_object(name, values, false)
     end
@@ -3962,14 +4813,15 @@ module Polars
       UInt32 => RbSeries.method(:new_opt_u32),
       UInt64 => RbSeries.method(:new_opt_u64),
       Decimal => RbSeries.method(:new_decimal),
-      Date => RbSeries.method(:new_from_anyvalues),
-      Datetime => RbSeries.method(:new_from_anyvalues),
-      Duration => RbSeries.method(:new_from_anyvalues),
-      Time => RbSeries.method(:new_from_anyvalues),
+      Date => RbSeries.method(:new_from_any_values),
+      Datetime => RbSeries.method(:new_from_any_values),
+      Duration => RbSeries.method(:new_from_any_values),
+      Time => RbSeries.method(:new_from_any_values),
       Boolean => RbSeries.method(:new_opt_bool),
       Utf8 => RbSeries.method(:new_str),
       Object => RbSeries.method(:new_object),
       Categorical => RbSeries.method(:new_str),
+      Enum => RbSeries.method(:new_str),
       Binary => RbSeries.method(:new_binary),
       Null => RbSeries.method(:new_null)
     }

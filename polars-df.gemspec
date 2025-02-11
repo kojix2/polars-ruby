@@ -4,7 +4,7 @@ Gem::Specification.new do |spec|
   spec.name          = "polars-df"
   spec.version       = Polars::VERSION
   spec.summary       = "Blazingly fast DataFrames for Ruby"
-  spec.homepage      = "https://github.com/ankane/polars-ruby"
+  spec.homepage      = "https://github.com/ankane/ruby-polars"
   spec.license       = "MIT"
 
   spec.author        = "Andrew Kane"
@@ -14,7 +14,8 @@ Gem::Specification.new do |spec|
   spec.require_path  = "lib"
   spec.extensions    = ["ext/polars/extconf.rb"]
 
-  spec.required_ruby_version = ">= 3.0"
+  spec.required_ruby_version = ">= 3.2"
 
+  spec.add_dependency "bigdecimal"
   spec.add_dependency "rb_sys"
 end
